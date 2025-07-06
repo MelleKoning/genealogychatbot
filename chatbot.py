@@ -77,6 +77,7 @@ from litellm_utils import function_to_litellm_definition
 
 class Chatbot:
     def __init__(self, database_name):
+        self.debug_mode = self.ask_debug_mode()
         self.db = open_database(database_name, force_unlock=True)
         if self.db is None:
             raise Exception(f"Unable to open database {database_name}")
@@ -120,6 +121,10 @@ class Chatbot:
             self.get_chatbot_response(query)
             query = input("\n\nEnter your question: ")
 
+    def ask_debug_mode(self) -> bool:
+        response = input("Do you want to enable debug mode? (y/n): ").strip().lower()
+        return response == 'y'
+
     # @_throttle.rate_limited(_limiter)
     def _llm_complete(
         self,
@@ -127,6 +132,15 @@ class Chatbot:
         tool_definitions: Optional[List[Dict[str, str]]],
         seed: int,
     ) -> Any:
+        if self.debug_mode:
+            # Log the request
+            print("\033[94mRequest to AI Model:\033[0m")
+            print(json.dumps({
+                "model": GRAMPS_AI_MODEL_NAME,
+                "messages": all_messages,
+                "seed": seed,
+                "tools": tool_definitions
+            }, indent=2))
         response = litellm.completion(
             model=GRAMPS_AI_MODEL_NAME,  # self.model,
             messages=all_messages,
@@ -134,6 +148,14 @@ class Chatbot:
             tools=tool_definitions,
             tool_choice="auto" if tool_definitions is not None else None,
         )
+
+        if self.debug_mode:
+            # Log the response
+            print("\033[92mResponse from AI Model:\033[0m")
+            # Convert response to a dictionary if possible
+            response_dict = response.to_dict() if hasattr(response, 'to_dict') else str(response)
+            print(json.dumps(response_dict, indent=2))
+
         return response
 
     def get_chatbot_response(
