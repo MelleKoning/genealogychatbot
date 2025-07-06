@@ -1,0 +1,70 @@
+#!/bin/bash
+# in case the script uses openai then these are important
+source ./config.env
+export GRAMPS_AI_MODEL_NAME="openai/gpt-4o"
+export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
+echo "The GEMINI_API_KEY is: $GEMINI_API_KEY"
+export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash"
+echo "The OPENAI_API_KEY is: $OPENAI_API_KEY"
+echo "The used database is: $GRAMPS_DB_NAME"
+# --- Configuration ---
+# Set the name of your virtual environment directory
+VENV_NAME="venv_chat"
+
+# Set the name of your Python script
+PYTHON_SCRIPT="chatbot.py"
+
+# Define the Python package(s) your script needs
+# These will be installed in the virtual environment
+PYTHON_PACKAGES="litellm gramps PyGObject"
+
+# --- Script Logic ---
+
+echo "--- Setting up Python environment for ${PYTHON_SCRIPT} ---"
+
+# 1. Check if the virtual environment already exists
+if [ ! -d "$VENV_NAME" ]; then
+    echo "Creating virtual environment: $VENV_NAME"
+    # Create the virtual environment using python3
+    python3 -m venv --system-site-packages "$VENV_NAME"
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to create virtual environment. Do you have python3-venv installed? (Try: sudo apt install python3-venv)"
+        exit 1
+    fi
+else
+    echo "Virtual environment '$VENV_NAME' already exists."
+fi
+
+# 2. Activate the virtual environment
+echo "Activating virtual environment..."
+# Check if the activate script exists before sourcing
+if [ -f "$VENV_NAME/bin/activate" ]; then
+    source "$VENV_NAME/bin/activate"
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to activate virtual environment."
+        exit 1
+    fi
+    echo "Virtual environment activated."
+else
+    echo "Error: Activate script not found in $VENV_NAME/bin/. Virtual environment might be corrupted."
+    exit 1
+fi
+
+# 3. Install required Python packages into the virtual environment
+echo "Installing/Upgrading required Python packages: ${PYTHON_PACKAGES}"
+pip install ${PYTHON_PACKAGES}
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to install Python packages. Please check your network connection or package names."
+    deactivate # Deactivate before exiting on error
+    exit 1
+fi
+
+# 4. Run your Python script
+echo "--- Running ${PYTHON_SCRIPT} ---"
+python "$PYTHON_SCRIPT" # Use 'python' as it points to the venv's python
+
+# 5. Deactivate the virtual environment (optional, but good practice if you want to return to system environment)
+echo "--- Script finished. Deactivating virtual environment. ---"
+deactivate
+
+echo "Setup and execution complete."

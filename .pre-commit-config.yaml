@@ -1,0 +1,33 @@
+exclude: "vendor|mocks"
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+    - id: trailing-whitespace
+      args: [--markdown-linebreak-ext=md]
+    - id: end-of-file-fixer
+    - id: check-yaml
+      args: [--unsafe]
+    - id: check-added-large-files
+    - id: check-json
+    - id: pretty-format-json
+      args: [--autofix]
+    - id: check-merge-conflict
+    - id: check-symlinks
+    - id: detect-private-key
+    - id: mixed-line-ending
+      args: [--fix=lf]
+- repo: https://github.com/golangci/golangci-lint
+  rev: v2.1.2
+  hooks:
+  - id: golangci-lint
+    name: golangci-lint
+    description: Fast linters runner for Go.
+    types: [go]
+    language: golang
+    pass_filenames: false
+- repo: https://github.com/igorshubovych/markdownlint-cli
+  rev: v0.38.0
+  hooks:
+    - id: markdownlint-fix
+      language_version: 14.19.1

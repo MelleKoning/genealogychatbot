@@ -1,0 +1,8 @@
+# the subfolder will be used for the python virtual environment
+/venv_chat
+__pycache__
+# config.env contain the API keys and
+# the databasename that we want to use
+config.env
+# other ignores
+.qodo
