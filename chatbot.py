@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 import os
 import json
 import sys
+import time
 
 try:
     import litellm
@@ -97,6 +98,7 @@ class Chatbot:
             "get_person_event_list": self.get_person_event_list,
             "get_event": self.get_event,
             "get_event_place": self.get_event_place,
+            "get_child_in_families": self.get_child_in_families,
         }
         self.tool_definitions = [
             function_to_litellm_definition(self.get_home_person),
@@ -112,6 +114,7 @@ class Chatbot:
             function_to_litellm_definition(self.get_person_event_list),
             function_to_litellm_definition(self.get_event),
             function_to_litellm_definition(self.get_event_place),
+            function_to_litellm_definition(self.get_child_in_families),
         ]
 
     def chat(self):
@@ -132,15 +135,17 @@ class Chatbot:
         tool_definitions: Optional[List[Dict[str, str]]],
         seed: int,
     ) -> Any:
-        if self.debug_mode:
+        # disabled debug_mode for requests
+        # as the tools in the requests is too lengthy for logging
+        # if self.debug_mode:
             # Log the request
-            print("\033[94mRequest to AI Model:\033[0m")
-            print(json.dumps({
-                "model": GRAMPS_AI_MODEL_NAME,
-                "messages": all_messages,
-                "seed": seed,
-                "tools": tool_definitions
-            }, indent=2))
+            # print("\033[94mRequest to AI Model:\033[0m")
+            # print(json.dumps({
+            #    "model": GRAMPS_AI_MODEL_NAME,
+            #    "messages": all_messages,
+            #    "seed": seed,
+            #    "tools": tool_definitions
+            #}, indent=2))
         response = litellm.completion(
             model=GRAMPS_AI_MODEL_NAME,  # self.model,
             messages=all_messages,
@@ -148,14 +153,12 @@ class Chatbot:
             tools=tool_definitions,
             tool_choice="auto" if tool_definitions is not None else None,
         )
-
         if self.debug_mode:
             # Log the response
             print("\033[92mResponse from AI Model:\033[0m")
             # Convert response to a dictionary if possible
             response_dict = response.to_dict() if hasattr(response, 'to_dict') else str(response)
             print(json.dumps(response_dict, indent=2))
-
         return response
 
     def get_chatbot_response(
@@ -180,12 +183,18 @@ class Chatbot:
         print("   Thinking...", end="")
         sys.stdout.flush()
         while count < 10:
+            time.sleep(1)  # Add a one-second delay to prevent overwhelming the AI remote
             count += 1
             response = self._llm_complete(self.messages, self.tool_definitions, seed)
+            if not response.choices:
+                print("No response choices available from the AI model.")
+                break
             msg = response.choices[0].message
             self.messages.append(msg.to_dict())
             if msg.tool_calls:
                 for tool_call in msg["tool_calls"]:
+                    print(f"Executing tool call: {tool_call['function']['name']}")
+                    print("This is a local tool call.")
                     tool_name = tool_call["function"]["name"]
                     arguments = json.loads(tool_call["function"]["arguments"])
                     print(".", end="")
@@ -197,6 +206,10 @@ class Chatbot:
                             if tool_func is not None
                             else "Unknown tool"
                         )
+                        if self.debug_mode:
+                            print("\033[93mTool call result:\033[0m")
+                            print(json.dumps(tool_result, indent=2))
+
                     except Exception as exc:
                         print(exc)
                         tool_result = f"Error in calling tool `{tool_name}`"
@@ -235,6 +248,12 @@ class Chatbot:
         Get a family's data given the family handle. Note that family
         handles are different from a person handle. You can use a person's
         family data to get the family handle.
+        The result contains several handles as follows:
+        "father_handle": person_handle of the father in the family
+        "mother_handle": person_handle of the mother in the family
+        "child_ref_list": list of person_handles of children in the family,
+        each item in the "child_ref_list" has a "ref" which is the person_handle of children of the family
+        details of the persons can be retrieved using the "get_person" tool
         """
         data = dict(self.db.get_raw_family_data(family_handle))
         return data
@@ -323,6 +342,23 @@ class Chatbot:
         """
         event = self.db.get_event_from_handle(event_handle)
         return place_displayer.display_event(self.db, event)
+
+    def get_child_in_families(self, person_handle: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve detailed information about all families where the given person is listed as a child.
+        This tool is essential for genealogical research, allowing users to identify the person's siblings
+        and parents by examining the family structures they belong to. It returns a list of dictionaries,
+        each containing comprehensive data about a family, facilitating in-depth family tree analysis.
+        """
+        person_obj = self.db.get_person_from_handle(person_handle)
+        families = self.sa.child_in(person_obj)
+        family_data_list = []
+
+        for family in families:
+            family_data = self.get_family(family.handle)
+            family_data_list.append(family_data)
+
+        return family_data_list
 
 
 if __name__ == "__main__":
