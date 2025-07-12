@@ -4,6 +4,7 @@ import os
 import json
 import sys
 import time
+import re
 
 try:
     import litellm
@@ -18,7 +19,7 @@ from gramps.gen.const import GRAMPS_LOCALE as glocale
 from gramps.gen.simple import SimpleAccess
 from gramps.gen.db.utils import open_database
 from gramps.gen.display.place import displayer as place_displayer
-
+from gramps.gen.config import CONFIGMAN
 _ = glocale.translation.gettext
 
 HELP_TEXT = """
@@ -68,10 +69,15 @@ Gramps open source genealogy program. Never mention to
 the user what an item's handle is. Never give a handle
 as an answer, always look up the details of a handle (like
 the person's name, or a family parents' names).
+
+You can get the start point of the genealogy tree using the `start_point` tool.
+This tool does not take any parameters (no "arguments" are to be provided) and returns the default person data.
 """
 
 GRAMPS_AI_MODEL_NAME = os.environ.get("GRAMPS_AI_MODEL_NAME")
 GRAMPS_AI_MODEL_URL = os.environ.get("GRAMPS_AI_MODEL_URL")
+# overwrite the default database path in case the env variable is set
+GRAMPS_DB_LOCATION = os.environ.get("GRAMPS_DB_LOCATION")
 
 from litellm_utils import function_to_litellm_definition
 
@@ -85,7 +91,7 @@ class Chatbot:
         self.messages = []
         self.sa = SimpleAccess(self.db)
         self.tool_map = {
-            "get_home_person": self.get_home_person,
+            "start_point": self.start_point,
             "get_mother_of_person": self.get_mother_of_person,
             "get_family": self.get_family,
             "get_person": self.get_person,
@@ -99,9 +105,10 @@ class Chatbot:
             "get_event": self.get_event,
             "get_event_place": self.get_event_place,
             "get_child_in_families": self.get_child_in_families,
+            "find_people_by_name": self.find_people_by_name,
         }
         self.tool_definitions = [
-            function_to_litellm_definition(self.get_home_person),
+            function_to_litellm_definition(self.start_point),
             function_to_litellm_definition(self.get_mother_of_person),
             function_to_litellm_definition(self.get_family),
             function_to_litellm_definition(self.get_person),
@@ -115,6 +122,7 @@ class Chatbot:
             function_to_litellm_definition(self.get_event),
             function_to_litellm_definition(self.get_event_place),
             function_to_litellm_definition(self.get_child_in_families),
+            function_to_litellm_definition(self.find_people_by_name),
         ]
 
     def chat(self):
@@ -137,15 +145,15 @@ class Chatbot:
     ) -> Any:
         # disabled debug_mode for requests
         # as the tools in the requests is too lengthy for logging
-        # if self.debug_mode:
+        if self.debug_mode:
             # Log the request
-            # print("\033[94mRequest to AI Model:\033[0m")
-            # print(json.dumps({
-            #    "model": GRAMPS_AI_MODEL_NAME,
-            #    "messages": all_messages,
-            #    "seed": seed,
-            #    "tools": tool_definitions
-            #}, indent=2))
+            print("\033[94mRequest to AI Model:\033[0m")
+            print(json.dumps({
+                "model": GRAMPS_AI_MODEL_NAME,
+                "messages": all_messages,
+                "seed": seed,
+                "tools": tool_definitions
+            }, indent=2))
         response = litellm.completion(
             model=GRAMPS_AI_MODEL_NAME,  # self.model,
             messages=all_messages,
@@ -258,9 +266,10 @@ class Chatbot:
         data = dict(self.db.get_raw_family_data(family_handle))
         return data
 
-    def get_home_person(self) -> Dict[str, Any]:
+    def start_point(self) -> Dict[str, Any]:
         """
-        Get the home person data.
+        Get the start of the genealogy tree, i.e., the default person.
+        The "first_name" contains call names of the person, the "surname" contains last name of the person.
         """
         obj = self.db.get_default_person()
         if obj:
@@ -360,10 +369,116 @@ class Chatbot:
 
         return family_data_list
 
+    def find_people_by_name(self, search_string: str) -> List[Dict[str, Any]]:
+        """
+        Searches the Gramps database for people whose primary or alternate names
+        contain the given search string (case-insensitive), using the all_people iterator.
+
+        Args:
+            search_string: The string to match in person names.
+
+        Returns:
+            A list of dictionaries, where each dictionary contains the raw data
+            of a matching person.
+        """
+        matching_people_raw_data = []
+        search_pattern = re.compile(re.escape(search_string), re.IGNORECASE)
+
+        for person_obj in self.sa.all_people():
+            matched = False
+
+            # Helper function to check fields within a Name or Surname object
+            def check_name_fields(name_or_surname_obj: Any) -> bool:
+                """Checks relevant string fields of a Name or Surname object for a match."""
+                fields_to_check = []
+
+                # Fields common to Name object (primary_name or alternate_name elements)
+                if hasattr(name_or_surname_obj, 'first_name'):
+                    fields_to_check.append(name_or_surname_obj.first_name)
+                # Corrected: 'prefix' and 'suffix' are properties of the Name object itself, not the Surname object.
+                if hasattr(name_or_surname_obj, 'prefix'):
+                    fields_to_check.append(name_or_surname_obj.prefix)
+                if hasattr(name_or_surname_obj, 'suffix'):
+                    fields_to_check.append(name_or_surname_obj.suffix)
+                if hasattr(name_or_surname_obj, 'title'):
+                    fields_to_check.append(name_or_surname_obj.title)
+                if hasattr(name_or_surname_obj, 'call'):
+                    fields_to_check.append(name_or_surname_obj.call)
+                if hasattr(name_or_surname_obj, 'nick'):
+                    fields_to_check.append(name_or_surname_obj.nick)
+                if hasattr(name_or_surname_obj, 'famnick'):
+                    fields_to_check.append(name_or_surname_obj.famnick)
+                if hasattr(name_or_surname_obj, 'patronymic'):
+                    fields_to_check.append(name_or_surname_obj.patronymic)
+
+                # Fields specific to Surname object (within surname_list)
+                if hasattr(name_or_surname_obj, 'surname'): # This means it's a Surname object
+                    fields_to_check.append(name_or_surname_obj.surname)
+                    # Note: Surname objects can also have their own 'prefix' and 'connector'
+                    # which are separate from the 'prefix' of the main Name object.
+                    if hasattr(name_or_surname_obj, 'connector'):
+                        fields_to_check.append(name_or_surname_obj.connector)
+
+                for field_value in fields_to_check:
+                    # Ensure field_value is a non-empty string before attempting search
+                    if isinstance(field_value, str) and field_value and search_pattern.search(field_value):
+                        return True
+                return False
+
+            # Check primary name fields
+            if person_obj.primary_name:
+                if check_name_fields(person_obj.primary_name):
+                    matched = True
+
+                # Surnames are in a list, iterate through each Surname object
+                if not matched and hasattr(person_obj.primary_name, 'surname_list'):
+                    for surname_obj in person_obj.primary_name.surname_list:
+                        if check_name_fields(surname_obj): # Check the Surname object
+                            matched = True
+                            break
+
+            # Check alternate name fields if not already matched
+            if not matched and hasattr(person_obj, 'alternate_names') and person_obj.alternate_names:
+                for alt_name in person_obj.alternate_names:
+                    if check_name_fields(alt_name):
+                        matched = True
+                        break
+
+                    # Check surnames within alternate name
+                    if not matched and hasattr(alt_name, 'surname_list'):
+                        for alt_surname_obj in alt_name.surname_list:
+                            if check_name_fields(alt_surname_obj):
+                                matched = True
+                                break
+                        if matched: # Break from outer alt_names loop if matched
+                            break
+
+            if matched:
+                # Use the existing _get_raw_person_from_id_data to get raw data
+                # self.db is assumed to be the database access object within the tool's class.
+                raw_data = dict(self.db._get_raw_person_from_id_data(person_obj.gramps_id))
+                matching_people_raw_data.append(raw_data)
+
+        return matching_people_raw_data
 
 if __name__ == "__main__":
     # Get the database name from the environment variable
     database_name = os.getenv("GRAMPS_DB_NAME")
     print(f"Attempting to initialize Chatbot with database: {database_name}")
+    # Use env variable if set, otherwise default to ./grampsdb below script
+    if GRAMPS_DB_LOCATION:
+        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+        # If the env var is a relative path, resolve it relative to script
+        if not os.path.isabs(GRAMPS_DB_LOCATION):
+            GRAMPS_DB_FOLDER = os.path.join(SCRIPT_DIR, GRAMPS_DB_LOCATION)
+        else:
+            GRAMPS_DB_FOLDER = GRAMPS_DB_LOCATION
+        print(f"Using database folder: {GRAMPS_DB_FOLDER}")
+        if not os.path.isdir(GRAMPS_DB_FOLDER):
+            raise Exception(
+                f"GRAMPS_DB_FOLDER path does not exist: {GRAMPS_DB_FOLDER}\n"
+                f"GRAMPS_DB_LOCATION env: {GRAMPS_DB_LOCATION}"
+            )
+        CONFIGMAN.set("database.path", GRAMPS_DB_FOLDER)
     chatbot = Chatbot(database_name)
     chatbot.chat()

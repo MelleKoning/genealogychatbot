@@ -4,5 +4,6 @@ __pycache__
 # config.env contain the API keys and
 # the databasename that we want to use
 config.env
+.grampsdb
 # other ignores
 .qodo

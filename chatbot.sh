@@ -1,10 +1,16 @@
 #!/bin/bash
 # in case the script uses openai then these are important
 source ./config.env
+echo $GRAMPS_DB_LOCATION
 export GRAMPS_AI_MODEL_NAME="openai/gpt-4o"
+export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
 export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
 echo "The GEMINI_API_KEY is: $GEMINI_API_KEY"
 export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash"
+#export GRAMPS_AI_MODEL_NAME="ollama/gemma3:4b"
+#export GRAMPS_AI_MODEL_NAME="ollama/cogito:3b"
+#export GRAMPS_AI_MODEL_NAME="ollama/qwen2.5-coder:3b"
+#export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:e2b"
 echo "The OPENAI_API_KEY is: $OPENAI_API_KEY"
 echo "The used database is: $GRAMPS_DB_NAME"
 # --- Configuration ---
