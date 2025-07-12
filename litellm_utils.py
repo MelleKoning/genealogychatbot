@@ -22,19 +22,27 @@ def function_to_litellm_definition(
         if param.default == inspect.Parameter.empty:
             required.append(name)
 
-    return {
-        "type": "function",
-        "function": {
-            "name": func.__name__,
-            "description": doc.strip(),
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-        },
+    function_def = {
+        "name": func.__name__,
+        "description": doc.strip(),
     }
 
+    # If the function has parameters, we add them to the definition
+    # as the start_point does not have any properties we deliberately
+    # do not add the "parameters" key if there are no properties
+    # - some smaller LLMs do not understand this and throw an error
+    # for the start point function when they try to call it
+    if properties:
+        function_def["parameters"] = {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        }
+
+    return {
+        "type": "function",
+        "function": function_def,
+    }
 
 def python_type_to_json_type(python_type: type) -> str:
     # Basic type mapping
