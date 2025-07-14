@@ -64,14 +64,24 @@ export GEMINI_API_KEY="gemini-key..."
 """
 
 SYSTEM_PROMPT = """
-You are a helpful genealogist and an expert in the
-Gramps open source genealogy program. Never mention to
-the user what an item's handle is. Never give a handle
-as an answer, always look up the details of a handle (like
-the person's name, or a family parents' names).
+You are a helpful and highly analytical genealogist, an expert in the Gramps open source genealogy program.
+Your primary goal is to assist the user by providing accurate and relevant genealogical information.
+
+**Crucial Guidelines for Tool Usage and Output:**
+
+1.  **Prioritize User Response:** Always aim to provide a direct answer to the user's query as soon as you have sufficient information. Do not over-rely on tools if the answer can be reasonably inferred or constructed from existing knowledge or prior tool outputs.
+2.  **Tool Purpose:** Use tools ONLY when necessary to gather specific information that directly helps answer the user's request.
+3.  **Handle Details:** Never mention an item's internal 'handle' directly to the user. Always use tools to look up and present human-readable details (like a person's full name, or the names of parents in a family).
+4.  **Progress Monitoring & Self-Correction:**
+    * **Assess Tool Results:** After each tool call, carefully evaluate its output. Did it provide the expected information? Is it sufficient to progress towards the user's goal?
+    * **Avoid Redundancy:** Do not call the same tool with the exact same parameters if the previous call resulted in no new information or an error, unless explicitly trying a different approach based on a clear hypothesis.
+    * **Detect Stalling:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data.
+5.  **Graceful Exit & Partial Results:**
+    * **If Stuck or Unable to Progress:** If you detect that you are stuck, cannot make progress with available tools, or have made several unproductive tool calls, **stop attempting further tool calls immediately.**
+    * **Summarize Findings:** Instead, synthesize all the information you *have* gathered so far, even if it's incomplete or not directly leading to a full answer. Clearly state what you found and what information you were unable to obtain.
+    * **Suggest Next Steps/Ask for Clarification:** If you cannot fully answer the question, clearly state what additional information you would need from the user to proceed, or suggest a different line of inquiry.
 
 You can get the start point of the genealogy tree using the `start_point` tool.
-This tool does not take any parameters (no "arguments" are to be provided) and returns the default person data.
 """
 
 GRAMPS_AI_MODEL_NAME = os.environ.get("GRAMPS_AI_MODEL_NAME")
@@ -190,16 +200,48 @@ class Chatbot:
         count = 0
         print("   Thinking...", end="")
         sys.stdout.flush()
-        while count < 10:
+
+        limit_loop = 6
+        while count < limit_loop:
             time.sleep(1)  # Add a one-second delay to prevent overwhelming the AI remote
             count += 1
-            response = self._llm_complete(self.messages, self.tool_definitions, seed)
+
+            # Determine if this is the final attempt
+            is_final_attempt = (count == limit_loop)
+
+            # If it's the final attempt, we do not send tools to the LLM.
+            # This ensures that the LLM is forced to provide a final response
+            # without attempting to call any more tools.
+            tools_to_send = self.tool_definitions if not is_final_attempt else None
+
+            # For the final attempt, we might also want to add a reinforcing system message
+            # to ensure it knows to summarize.
+            messages_for_llm = list(self.messages)
+
+            if is_final_attempt:
+                # Append a temporary system message to guide the final response
+                messages_for_llm.append(
+                    {
+                        "role": "system",
+                        "content": "You have reached the maximum number of "
+                        "tool-calling attempts. Based on the information gathered "
+                        "so far, provide the most complete answer you can, or "
+                        "clearly state what information you could not obtain. Do "
+                        "not attempt to call any more tools."
+                    }
+                )
+
+            response = self._llm_complete(messages_for_llm, tools_to_send, seed) # Pass the conditional tools
+
             if not response.choices:
                 print("No response choices available from the AI model.")
                 break
+
             msg = response.choices[0].message
-            self.messages.append(msg.to_dict())
-            if msg.tool_calls:
+            self.messages.append(msg.to_dict()) # Add the actual message to the persistent history
+
+            # Check for tool calls OR if it's the final attempt
+            if msg.tool_calls and not is_final_attempt: # Only execute tools if not the final attempt
                 for tool_call in msg["tool_calls"]:
                     print(f"Executing tool call: {tool_call['function']['name']}")
                     print("This is a local tool call.")
@@ -214,23 +256,41 @@ class Chatbot:
                             if tool_func is not None
                             else "Unknown tool"
                         )
+
+                        content_for_llm = ""
+                        if isinstance(tool_result, (dict, list)):
+                            content_for_llm = json.dumps(tool_result)
+                        else:
+                            content_for_llm = str(tool_result)
                         if self.debug_mode:
                             print("\033[93mTool call result:\033[0m")
-                            print(json.dumps(tool_result, indent=2))
+                            print(content_for_llm)
 
                     except Exception as exc:
                         print(exc)
-                        tool_result = f"Error in calling tool `{tool_name}`"
+                        content_for_llm = f"Error in calling tool `{tool_name}`: {exc}" # Include exception for LLM clarity
+
                     self.messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
-                            "content": str(tool_result),
+                            "content": content_for_llm,
                         }
                     )
             else:
+                # This 'else' block is now entered if:
+                # 1. The LLM provided a final generative response (no tool_calls)
+                # 2. It's the final attempt (count == 6) and it might *still* try to call a tool,
+                #    but we've removed the tools, so it's forced to respond.
                 final_response = response.choices[0].message.content
-                break
+                break # Exit the loop as we have a final response or hit max attempts
+
+        # If the loop finishes without a 'break' (e.g., if the last message was a tool call,
+        # but it was the 6th iteration and we forced it to output text), ensure final_response
+        # is set. This might be redundant if the new logic above ensures it, but good for safety.
+        if final_response == "I was unable to find the desired information." and self.messages and self.messages[-1].get("content"):
+            final_response = self.messages[-1]["content"]
+
         return final_response
 
     # Tools:
@@ -268,8 +328,14 @@ class Chatbot:
 
     def start_point(self) -> Dict[str, Any]:
         """
-        Get the start of the genealogy tree, i.e., the default person.
-        The "first_name" contains call names of the person, the "surname" contains last name of the person.
+        Get the start point of the genealogy tree, i.e., the default person.
+        This tool does not take any parameters (no "arguments" are to be provided) and returns
+        the default person data.
+        The "first_name" contains the first name of the person.
+        The "surname_list" and then "surname" contains the last name(s) of the person.
+        The "handle" is the key for the person to use for other tool calls.
+        "family_list" is a list of handles where the person is a parent.
+        "parent_family_list" is a list of handles for the families where the person is listed as a child.
         """
         obj = self.db.get_default_person()
         if obj:
