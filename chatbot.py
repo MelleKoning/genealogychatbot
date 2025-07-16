@@ -5,6 +5,7 @@ import json
 import sys
 import time
 import re
+import inspect
 
 try:
     import litellm
@@ -251,11 +252,15 @@ class Chatbot:
                     sys.stdout.flush()
                     tool_func = self.tool_map.get(tool_name)
                     try:
-                        tool_result = (
-                            tool_func(**arguments)
-                            if tool_func is not None
-                            else "Unknown tool"
-                        )
+                        if tool_func is not None:
+                            sig = inspect.signature(tool_func)
+                            if len(sig.parameters) == 0:
+                                # Ignore any arguments, call with none
+                                tool_result = tool_func()
+                            else:
+                                tool_result = tool_func(**arguments)
+
+                        else : tool_result = "Unknown tool: {tool_name}"
 
                         content_for_llm = ""
                         if isinstance(tool_result, (dict, list)):
@@ -305,6 +310,8 @@ class Chatbot:
     def get_mother_of_person(self, person_handle: str) -> Dict[str, Any]:
         """
         Given a person's handle, return their mother's data dictionary.
+        The person_handle to pass to this func is the "person_handle" (a string) for the person
+        whose mother you want to find.
         """
         person_obj = self.db.get_person_from_handle(person_handle)
         obj = self.sa.mother(person_obj)
@@ -329,13 +336,16 @@ class Chatbot:
     def start_point(self) -> Dict[str, Any]:
         """
         Get the start point of the genealogy tree, i.e., the default person.
-        This tool does not take any parameters (no "arguments" are to be provided) and returns
-        the default person data.
-        The "first_name" contains the first name of the person.
-        The "surname_list" and then "surname" contains the last name(s) of the person.
-        The "handle" is the key for the person to use for other tool calls.
-        "family_list" is a list of handles where the person is a parent.
-        "parent_family_list" is a list of handles for the families where the person is listed as a child.
+        This tool does not take any "arguments". When calling this tool the "arguments" are
+        to be ommitted.
+        * When you do not yet have any "person_handle" value yet for other tools
+        then use this tool to get the first person in the genealogy tree.
+        The result of start_point contains values for:
+        * The "first_name" contains the first name of the person.
+        * The "surname_list" and then "surname" contains the last name(s) of the person.
+        * The "handle" is the key that looks like a hash string for the person to use for other tool calls.
+        * "family_list" is a list of handles where the person is a parent.
+        * "parent_family_list" is a list of handles for the families where the person is listed as a child.
         """
         obj = self.db.get_default_person()
         if obj:
@@ -347,6 +357,8 @@ class Chatbot:
         """
         Get a list of children handles of a person's main family,
         given a person's handle.
+        Result:
+        * provides "handle" values of children, to be used as arguments for get_person tool.
         """
         obj = self.db.get_person_from_handle(person_handle)
         family_handle_list = obj.get_family_handle_list()
@@ -360,6 +372,8 @@ class Chatbot:
     def get_father_of_person(self, person_handle: str) -> Dict[str, Any]:
         """
         Given a person's handle, return their father's data dictionary.
+        The "person_handle" to pass to this func is the "person_handle" (a string)
+        for the person whose father you want to find.
         """
         person_obj = self.db.get_person_from_handle(person_handle)
         obj = self.sa.father(person_obj)
