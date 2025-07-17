@@ -72,13 +72,15 @@ Your primary goal is to assist the user by providing accurate and relevant genea
 
 1.  **Prioritize User Response:** Always aim to provide a direct answer to the user's query as soon as you have sufficient information. Do not over-rely on tools if the answer can be reasonably inferred or constructed from existing knowledge or prior tool outputs.
 2.  **Tool Purpose:** Use tools ONLY when necessary to gather specific information that directly helps answer the user's request.
-3.  **Handle Details:** Never mention an item's internal 'handle' directly to the user. Always use tools to look up and present human-readable details (like a person's full name, or the names of parents in a family).
+3.  **About data details from tools:** 
+    * Never mention database keys, grampsID keys, or a person's 'handle' directly to the user.
+    * Do present names of people to communicate human readable data received from tools 
 4.  **Progress Monitoring & Self-Correction:**
     * **Assess Tool Results:** After each tool call, carefully evaluate its output. Did it provide the expected information? Is it sufficient to progress towards the user's goal?
-    * **Avoid Redundancy:** Do not call the same tool with the exact same parameters if the previous call resulted in no new information or an error, unless explicitly trying a different approach based on a clear hypothesis.
-    * **Detect Stalling:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data.
+    * **Avoid Redundancy:** Do not call the same tool twice in a row.
+    * **Avoid looping:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data.
 5.  **Graceful Exit & Partial Results:**
-    * **If Stuck or Unable to Progress:** If you detect that you are stuck, cannot make progress with available tools, or have made several unproductive tool calls, **stop attempting further tool calls immediately.**
+    * **If Stuck or Unable to Progress:** If you can not make progress, or have made several unproductive tool calls, **stop attempting further tool calls immediately.**
     * **Summarize Findings:** Instead, synthesize all the information you *have* gathered so far, even if it's incomplete or not directly leading to a full answer. Clearly state what you found and what information you were unable to obtain.
     * **Suggest Next Steps/Ask for Clarification:** If you cannot fully answer the question, clearly state what additional information you would need from the user to proceed, or suggest a different line of inquiry.
 
@@ -156,15 +158,15 @@ class Chatbot:
     ) -> Any:
         # disabled debug_mode for requests
         # as the tools in the requests is too lengthy for logging
-        if self.debug_mode:
+        #if self.debug_mode:
             # Log the request
-            print("\033[94mRequest to AI Model:\033[0m")
-            print(json.dumps({
-                "model": GRAMPS_AI_MODEL_NAME,
-                "messages": all_messages,
-                "seed": seed,
-                "tools": tool_definitions
-            }, indent=2))
+         #   print("\033[94mRequest to AI Model:\033[0m")
+          #  print(json.dumps({
+           #     "model": GRAMPS_AI_MODEL_NAME,
+            #    "messages": all_messages,
+             #   "seed": seed,
+              #  "tools": tool_definitions
+            #}, indent=2))
         response = litellm.completion(
             model=GRAMPS_AI_MODEL_NAME,  # self.model,
             messages=all_messages,
@@ -320,15 +322,17 @@ class Chatbot:
 
     def get_family(self, family_handle: str) -> Dict[str, Any]:
         """
-        Get a family's data given the family handle. Note that family
-        handles are different from a person handle. You can use a person's
-        family data to get the family handle.
-        The result contains several handles as follows:
+        Get the data of a family given the family handle in the argument. 
+        * family handles are different from a person handle. 
+        * a person has family handles in two different fields:
+        - "parent_family_list" has the list of family handles the person is a child in
+        - "family_list" has the list of family handles the person is a parent in
+        The result of "get_family" tool contains several handles as follows:
         "father_handle": person_handle of the father in the family
         "mother_handle": person_handle of the mother in the family
         "child_ref_list": list of person_handles of children in the family,
-        each item in the "child_ref_list" has a "ref" which is the person_handle of children of the family
-        details of the persons can be retrieved using the "get_person" tool
+        each item in the "child_ref_list" has a "ref" which is the person_handle of children of the family.
+        Details of the persons can be retrieved using the "get_person" tool
         """
         data = dict(self.db.get_raw_family_data(family_handle))
         return data
@@ -336,10 +340,11 @@ class Chatbot:
     def start_point(self) -> Dict[str, Any]:
         """
         Get the start point of the genealogy tree, i.e., the default person.
-        This tool does not take any "arguments". When calling this tool the "arguments" are
-        to be ommitted.
-        * When you do not yet have any "person_handle" value yet for other tools
+        This tool does not take any "arguments". 
+        * Call this tool without arguments
+        * When no "person_handle" value is in the session context yet
         then use this tool to get the first person in the genealogy tree.
+        
         The result of start_point contains values for:
         * The "first_name" contains the first name of the person.
         * The "surname_list" and then "surname" contains the last name(s) of the person.
@@ -349,7 +354,7 @@ class Chatbot:
         """
         obj = self.db.get_default_person()
         if obj:
-            data = dict(self.db._get_raw_person_from_id_data(obj.gramps_id))
+            data = dict(self.db.get_raw_person_data(obj.handle))
             return data
         return None
 
@@ -537,9 +542,16 @@ class Chatbot:
                 # Use the existing _get_raw_person_from_id_data to get raw data
                 # self.db is assumed to be the database access object within the tool's class.
                 raw_data = dict(self.db._get_raw_person_from_id_data(person_obj.gramps_id))
-                matching_people_raw_data.append(raw_data)
+                desired_fields = {
+                    "handle": raw_data.get("handle"),
+                    "first_name": raw_data.get("primary_name", {}).get("first_name"),
+                    "surname": raw_data.get("primary_name", {}).get("surname_list", [{}])[0].get("surname"),
+                    "prefix": raw_data.get("primary_name", {}).get("surname_list", [{}])[0].get("prefix")
+                }
+                matching_people_raw_data.append(desired_fields)
 
         return matching_people_raw_data
+
 
 if __name__ == "__main__":
     # Get the database name from the environment variable
