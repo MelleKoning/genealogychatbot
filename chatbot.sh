@@ -5,19 +5,22 @@ echo $GRAMPS_DB_LOCATION
 #export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
 #export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
 echo "The GEMINI_API_KEY is: $GEMINI_API_KEY"
-#export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash"
-#export GRAMPS_AI_MODEL_NAME="gemini/gemini-1.5-flash"
-#export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:latest" # too big
-#export GRAMPS_AI_MODEL_NAME="ollama/deepseek-r1:8b" # too big
-#export GRAMPS_AI_MODEL_NAME="ollama/devstral:latest" # too big
-#export GRAMPS_AI_MODEL_NAME="ollama/mistral:latest" # too big
-#export GRAMPS_AI_MODEL_NAME="ollama/cogito:8b" # works but tricky with memory
-export GRAMPS_AI_MODEL_NAME="ollama/qwen2.5-coder:latest" # pretty good..
-#export GRAMPS_AI_MODEL_NAME="ollama/granite3.3:2b" # crashes often
-#export GRAMPS_AI_MODEL_NAME="ollama/qwen2.5-coder:3b" #reasonable
-#export GRAMPS_AI_MODEL_NAME="ollama/gemma3:4b"
 source ./config.env
-#export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:e2b"
+export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash" # cloud model -very good
+#export GRAMPS_AI_MODEL_NAME="gemini/gemini-1.5-flash" # cloud model - good
+#export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:latest" # too big for my pc
+#export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:e2b" # no tool cals performed
+#export GRAMPS_AI_MODEL_NAME="ollama/deepseek-r1:8b" # too big for my pc
+#export GRAMPS_AI_MODEL_NAME="ollama/devstral:latest" # too big for my pc
+#export GRAMPS_AI_MODEL_NAME="ollama/mistral:latest" # too big for my pc
+#export GRAMPS_AI_MODEL_NAME="ollama/cogito:3b" # works - kinda..
+#export GRAMPS_AI_MODEL_NAME="ollama/cogito:8b" # works but tricky with memory
+#export GRAMPS_AI_MODEL_NAME="ollama/qwen2.5-coder:latest" # pretty good..
+#export GRAMPS_AI_MODEL_NAME="ollama/granite3.3:2b" # crashes often on my pc
+#export GRAMPS_AI_MODEL_NAME="ollama/qwen2.5-coder:3b" # reasonable
+#export GRAMPS_AI_MODEL_NAME="ollama/gemma3:4b"
+
+
 echo "The OPENAI_API_KEY is: $OPENAI_API_KEY"
 echo "The used database is: $GRAMPS_DB_NAME"
 # --- Configuration ---

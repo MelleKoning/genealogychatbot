@@ -70,19 +70,20 @@ Your primary goal is to assist the user by providing accurate and relevant genea
 
 **Crucial Guidelines for Tool Usage and Output:**
 
-1.  **Prioritize User Response:** Always aim to provide a direct answer to the user's query as soon as you have sufficient information. Do not over-rely on tools if the answer can be reasonably inferred or constructed from existing knowledge or prior tool outputs.
+1.  **Prioritize User Response:** Always aim to provide a direct answer to the user's query as soon as you have sufficient information.
 2.  **Tool Purpose:** Use tools ONLY when necessary to gather specific information that directly helps answer the user's request.
-3.  **About data details from tools:** 
+3.  **About data details from tools:**
     * Never mention database keys, grampsID keys, or a person's 'handle' directly to the user.
-    * Do present names of people to communicate human readable data received from tools 
+    * Do present names of people to communicate human readable data received from tools
 4.  **Progress Monitoring & Self-Correction:**
-    * **Assess Tool Results:** After each tool call, carefully evaluate its output. Did it provide the expected information? Is it sufficient to progress towards the user's goal?
+    * **Assess Tool Results:** After each tool call, carefully evaluate its output. Did it provide the expected information?
+      Is it sufficient to progress towards the user's goal?
     * **Avoid Redundancy:** Do not call the same tool twice in a row.
-    * **Avoid looping:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data.
-5.  **Graceful Exit & Partial Results:**
+    * **Avoid looping:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the
+       user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data and stop.
+5.  **Graceful Exit with Partial Results:**
     * **If Stuck or Unable to Progress:** If you can not make progress, or have made several unproductive tool calls, **stop attempting further tool calls immediately.**
     * **Summarize Findings:** Instead, synthesize all the information you *have* gathered so far, even if it's incomplete or not directly leading to a full answer. Clearly state what you found and what information you were unable to obtain.
-    * **Suggest Next Steps/Ask for Clarification:** If you cannot fully answer the question, clearly state what additional information you would need from the user to proceed, or suggest a different line of inquiry.
 
 You can get the start point of the genealogy tree using the `start_point` tool.
 """
@@ -105,10 +106,10 @@ class Chatbot:
         self.sa = SimpleAccess(self.db)
         self.tool_map = {
             "start_point": self.start_point,
-            "get_mother_of_person": self.get_mother_of_person,
-            "get_family": self.get_family,
             "get_person": self.get_person,
+            "get_family": self.get_family,
             "get_children_of_person": self.get_children_of_person,
+            "get_mother_of_person": self.get_mother_of_person,
             "get_father_of_person": self.get_father_of_person,
             "get_person_birth_date": self.get_person_birth_date,
             "get_person_death_date": self.get_person_death_date,
@@ -322,8 +323,8 @@ class Chatbot:
 
     def get_family(self, family_handle: str) -> Dict[str, Any]:
         """
-        Get the data of a family given the family handle in the argument. 
-        * family handles are different from a person handle. 
+        Get the data of a family given the family handle in the argument.
+        * family handles are different from a person handle.
         * a person has family handles in two different fields:
         - "parent_family_list" has the list of family handles the person is a child in
         - "family_list" has the list of family handles the person is a parent in
@@ -340,11 +341,11 @@ class Chatbot:
     def start_point(self) -> Dict[str, Any]:
         """
         Get the start point of the genealogy tree, i.e., the default person.
-        This tool does not take any "arguments". 
+        This tool does not take any "arguments".
         * Call this tool without arguments
         * When no "person_handle" value is in the session context yet
         then use this tool to get the first person in the genealogy tree.
-        
+
         The result of start_point contains values for:
         * The "first_name" contains the first name of the person.
         * The "surname_list" and then "surname" contains the last name(s) of the person.
