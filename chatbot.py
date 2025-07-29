@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import os
 import json
@@ -340,21 +340,29 @@ class Chatbot:
             return data
         return None
 
-    def get_children_of_person(self, person_handle: str) -> List[str]:
+    def get_children_of_person(self, person_handle: str) -> List[Tuple[str, Dict[str, Any]]]:
         """
-        Get a list of children handles of a person's main family,
+        Get a list of children handles and their details for a person's main family,
         given a person's handle.
-        Result:
-        * provides "handle" values of children, to be used as arguments for get_person tool.
+
+        Returns a list of tuples, where each tuple contains:
+        - The child's handle (str)
+        - The child's details (dict) as returned by get_person
         """
         obj = self.db.get_person_from_handle(person_handle)
         family_handle_list = obj.get_family_handle_list()
+        children_data = []
+
         if family_handle_list:
             family_id = family_handle_list[0]
             family = self.db.get_family_from_handle(family_id)
-            return [handle.ref for handle in family.get_child_ref_list()]
-        else:
-            return []
+            child_handles = [handle.ref for handle in family.get_child_ref_list()]
+
+            for handle in child_handles:
+                person_data = self.get_person(handle)  # Use the existing get_person tool
+                children_data.append((handle, person_data))
+
+        return children_data
 
     def get_father_of_person(self, person_handle: str) -> Dict[str, Any]:
         """
