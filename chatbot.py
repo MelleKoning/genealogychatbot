@@ -122,21 +122,7 @@ class Chatbot:
             "find_people_by_name": self.find_people_by_name,
         }
         self.tool_definitions = [
-            function_to_litellm_definition(self.start_point),
-            function_to_litellm_definition(self.get_mother_of_person),
-            function_to_litellm_definition(self.get_family),
-            function_to_litellm_definition(self.get_person),
-            function_to_litellm_definition(self.get_children_of_person),
-            function_to_litellm_definition(self.get_father_of_person),
-            function_to_litellm_definition(self.get_person_birth_date),
-            function_to_litellm_definition(self.get_person_death_date),
-            function_to_litellm_definition(self.get_person_birth_place),
-            function_to_litellm_definition(self.get_person_death_place),
-            function_to_litellm_definition(self.get_person_event_list),
-            function_to_litellm_definition(self.get_event),
-            function_to_litellm_definition(self.get_event_place),
-            function_to_litellm_definition(self.get_child_in_families),
-            function_to_litellm_definition(self.find_people_by_name),
+            function_to_litellm_definition(func) for func in self.tool_map.values()
         ]
 
     def chat(self):
@@ -197,109 +183,105 @@ class Chatbot:
                 "content": retval,
             }
         )
+    def execute_tool(self, tool_call):
+        print(f"Executing tool call: {tool_call['function']['name']}")
+        print("This is a local tool call.")
+        tool_name = tool_call["function"]["name"]
+        arguments = json.loads(tool_call["function"]["arguments"])
+        print(".", end="")
+        sys.stdout.flush()
+        tool_func = self.tool_map.get(tool_name)
+        try:
+            if tool_func is not None:
+                sig = inspect.signature(tool_func)
+                if len(sig.parameters) == 0:
+                    # Ignore any arguments, call with none
+                    tool_result = tool_func()
+                else:
+                    tool_result = tool_func(**arguments)
+
+            else:
+                tool_result = f"Unknown tool: {tool_name}"
+
+            content_for_llm = ""
+            if isinstance(tool_result, (dict, list)):
+                content_for_llm = json.dumps(tool_result)
+            else:
+                content_for_llm = str(tool_result)
+            if self.debug_mode:
+                print("\033[93mTool call result:\033[0m")
+                print(content_for_llm)
+
+        except Exception as exc:
+            print(exc)
+            content_for_llm = f"Error in calling tool `{tool_name}`: {exc}"  # Include exception for LLM clarity
+
+        self.messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": content_for_llm,
+            }
+        )
 
     def _llm_loop(self, seed):
         # Tool-calling loop
         final_response = "I was unable to find the desired information."
-        count = 0
+        limit_loop = 6
         print("   Thinking...", end="")
         sys.stdout.flush()
 
-        limit_loop = 6
-        while count < limit_loop:
+        found_final_result = False
+
+        for count in range(limit_loop): # Iterates from 0 to 5
             time.sleep(1)  # Add a one-second delay to prevent overwhelming the AI remote
-            count += 1
 
-            # Determine if this is the final attempt
-            is_final_attempt = (count == limit_loop)
-
-            # If it's the final attempt, we do not send tools to the LLM.
-            # This ensures that the LLM is forced to provide a final response
-            # without attempting to call any more tools.
-            tools_to_send = self.tool_definitions if not is_final_attempt else None
-
-            # For the final attempt, we might also want to add a reinforcing system message
-            # to ensure it knows to summarize.
             messages_for_llm = list(self.messages)
+            tools_to_send = self.tool_definitions  # Send all tools on each attempt
 
-            if is_final_attempt:
-                # Append a temporary system message to guide the final response
-                messages_for_llm.append(
-                    {
-                        "role": "system",
-                        "content": "You have reached the maximum number of "
-                        "tool-calling attempts. Based on the information gathered "
-                        "so far, provide the most complete answer you can, or "
-                        "clearly state what information you could not obtain. Do "
-                        "not attempt to call any more tools."
-                    }
-                )
-
-            response = self._llm_complete(messages_for_llm, tools_to_send, seed) # Pass the conditional tools
+            response = self._llm_complete(messages_for_llm, tools_to_send, seed)
 
             if not response.choices:
                 print("No response choices available from the AI model.")
+                found_final_result = True
                 break
 
             msg = response.choices[0].message
-            self.messages.append(msg.to_dict()) # Add the actual message to the persistent history
+            self.messages.append(msg.to_dict())  # Add the actual message to the persistent history
 
-            # Check for tool calls OR if it's the final attempt
-            if msg.tool_calls and not is_final_attempt: # Only execute tools if not the final attempt
+            if msg.tool_calls:
                 for tool_call in msg["tool_calls"]:
-                    print(f"Executing tool call: {tool_call['function']['name']}")
-                    print("This is a local tool call.")
-                    tool_name = tool_call["function"]["name"]
-                    arguments = json.loads(tool_call["function"]["arguments"])
-                    print(".", end="")
-                    sys.stdout.flush()
-                    tool_func = self.tool_map.get(tool_name)
-                    try:
-                        if tool_func is not None:
-                            sig = inspect.signature(tool_func)
-                            if len(sig.parameters) == 0:
-                                # Ignore any arguments, call with none
-                                tool_result = tool_func()
-                            else:
-                                tool_result = tool_func(**arguments)
-
-                        else : tool_result = "Unknown tool: {tool_name}"
-
-                        content_for_llm = ""
-                        if isinstance(tool_result, (dict, list)):
-                            content_for_llm = json.dumps(tool_result)
-                        else:
-                            content_for_llm = str(tool_result)
-                        if self.debug_mode:
-                            print("\033[93mTool call result:\033[0m")
-                            print(content_for_llm)
-
-                    except Exception as exc:
-                        print(exc)
-                        content_for_llm = f"Error in calling tool `{tool_name}`: {exc}" # Include exception for LLM clarity
-
-                    self.messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "content": content_for_llm,
-                        }
-                    )
+                    self.execute_tool(tool_call)
             else:
-                # This 'else' block is now entered if:
-                # 1. The LLM provided a final generative response (no tool_calls)
-                # 2. It's the final attempt (count == 6) and it might *still* try to call a tool,
-                #    but we've removed the tools, so it's forced to respond.
                 final_response = response.choices[0].message.content
-                break # Exit the loop as we have a final response or hit max attempts
+                found_final_result = True
+                break
 
-        # If the loop finishes without a 'break' (e.g., if the last message was a tool call,
-        # but it was the 6th iteration and we forced it to output text), ensure final_response
-        # is set. This might be redundant if the new logic above ensures it, but good for safety.
+        # If the loop completed without being interrupted (no break), force a final response.
+        if not found_final_result:
+            # Append a temporary system message to guide the final response
+            messages_for_llm = list(self.messages)  # Start from the current message history
+            messages_for_llm.append(
+                {
+                    "role": "system",
+                    "content": "You have reached the maximum number of "
+                    "tool-calling attempts. Based on the information gathered "
+                    "so far, provide the most complete answer you can, or "
+                    "clearly state what information you could not obtain. Do "
+                    "not attempt to call any more tools."
+                }
+            )
+            response = self._llm_complete(messages_for_llm, None, seed)  # No tools!
+            if response.choices:
+                final_response = response.choices[0].message.content
+
+        # Ensure final_response is set in case of edge cases
         if final_response == "I was unable to find the desired information." and self.messages and self.messages[-1].get("content"):
             final_response = self.messages[-1]["content"]
 
         return final_response
+
+
 
     # Tools:
 
@@ -343,15 +325,14 @@ class Chatbot:
         Get the start point of the genealogy tree, i.e., the default person.
         This tool does not take any "arguments".
         * Call this tool without arguments
-        * When no "person_handle" value is in the session context yet
-        then use this tool to get the first person in the genealogy tree.
+        * Use this tool to get the first person in the genealogy tree.
 
         The result of start_point contains values for:
-        * The "first_name" contains the first name of the person.
-        * The "surname_list" and then "surname" contains the last name(s) of the person.
-        * The "handle" is the key that looks like a hash string for the person to use for other tool calls.
-        * "family_list" is a list of handles where the person is a parent.
-        * "parent_family_list" is a list of handles for the families where the person is listed as a child.
+        * The "first_name" contains the first name of this person.
+        * The "surname_list" and then "surname" contains the last name(s) of this person.
+        * The "handle" is the key that looks like a hash string for this person to use for other tool calls.
+        * "family_list" is a list of handles where this person is a parent.
+        * "parent_family_list" is a list of handles for the families where this person is listed as a child.
         """
         obj = self.db.get_default_person()
         if obj:

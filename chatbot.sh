@@ -5,7 +5,15 @@ echo $GRAMPS_DB_LOCATION
 #export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
 #export GRAMPS_AI_MODEL_NAME="openai/text-davinci"
 echo "The GEMINI_API_KEY is: $GEMINI_API_KEY"
-source ./config.env
+
+# Source the configuration file and export its variables to the environment.
+# This ensures that variables like GRAMPS_DB_NAME are available to the Python script.
+if [ -f ./config.env ]; then
+    set -a # Automatically export all variables defined from now on
+    source ./config.env
+    set +a # Stop automatically exporting
+fi
+
 export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash" # cloud model -very good
 #export GRAMPS_AI_MODEL_NAME="gemini/gemini-1.5-flash" # cloud model - good
 #export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:latest" # too big for my pc
