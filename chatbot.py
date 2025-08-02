@@ -6,7 +6,6 @@ import sys
 import time
 import re
 import inspect
-
 try:
     import litellm
 except ImportError:
@@ -21,7 +20,29 @@ from gramps.gen.simple import SimpleAccess
 from gramps.gen.db.utils import open_database
 from gramps.gen.display.place import displayer as place_displayer
 from gramps.gen.config import CONFIGMAN
+
+# gramps translation support for this module
 _ = glocale.translation.gettext
+
+# logging for this module
+import logging
+def ask_debug_mode() -> bool:
+    response = input("Do you want to enable debug mode? (y/n): ").strip().lower()
+    return response == 'y'
+
+debug_mode = ask_debug_mode()
+
+logger = logging.getLogger(__name__)
+
+# Now, we set the level for *our* specific logger based on user input.
+# This does not affect the root logger or other libraries.
+if debug_mode:
+    logger.setLevel(logging.DEBUG)
+logger.debug("logger has been successfully configured for the chatbot module. Debug mode is active.")
+
+
+# interface that we use in the gramplet
+from chatwithllm import IChatLogic
 
 HELP_TEXT = """
 GrampsChat uses the following OS environment variables:
@@ -96,13 +117,36 @@ GRAMPS_DB_LOCATION = os.environ.get("GRAMPS_DB_LOCATION")
 from litellm_utils import function_to_litellm_definition
 
 
-class Chatbot:
+class ChatBotConsole():
+    """
+    This class contains the actual logic for processing the chat messages.
+    It implements the IChatLogic interface.
+    """
+
     def __init__(self, database_name):
-        self.debug_mode = self.ask_debug_mode()
+        logger.debug("Initializing ChatBotConsole")
+
+        # Instantiate the chat logic class. This decouples the logic from the UI.
+        self.chat_logic = Chatbot(database_name)
+
+
+    def chat(self):
+        query = input("\n\nEnter your question: ")
+        while query:
+            response = self.chat_logic.get_reply(query)
+            print("\n\n>>>", response)
+            query = input("\n\nEnter your question: ")
+
+class Chatbot(IChatLogic):
+    def __init__(self, database_name):
+
         self.db = open_database(database_name, force_unlock=True)
         if self.db is None:
             raise Exception(f"Unable to open database {database_name}")
         self.messages = []
+        # initialize chat history with system prompt
+        self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
+
         self.sa = SimpleAccess(self.db)
         self.tool_map = {
             "start_point": self.start_point,
@@ -125,16 +169,16 @@ class Chatbot:
             function_to_litellm_definition(func) for func in self.tool_map.values()
         ]
 
-    def chat(self):
-        self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
-        query = input("\n\nEnter your question: ")
-        while query:
-            self.get_chatbot_response(query)
-            query = input("\n\nEnter your question: ")
 
-    def ask_debug_mode(self) -> bool:
-        response = input("Do you want to enable debug mode? (y/n): ").strip().lower()
-        return response == 'y'
+    # The implementation of the IChatLogic interface
+    def get_reply(self, message: str) -> str:
+        """
+        Processes the message and returns a reply.
+        In this initial version, it simply reverses the input text.
+        """
+        return self.get_chatbot_response(message)
+
+
 
     # @_throttle.rate_limited(_limiter)
     def _llm_complete(
@@ -144,9 +188,7 @@ class Chatbot:
         seed: int,
     ) -> Any:
         # disabled debug_mode for requests
-        # as the tools in the requests is too lengthy for logging
-        #if self.debug_mode:
-            # Log the request
+        # as the tools in the requests is too lengthy for logger
          #   print("\033[94mRequest to AI Model:\033[0m")
           #  print(json.dumps({
            #     "model": GRAMPS_AI_MODEL_NAME,
@@ -161,34 +203,33 @@ class Chatbot:
             tools=tool_definitions,
             tool_choice="auto" if tool_definitions is not None else None,
         )
-        if self.debug_mode:
-            # Log the response
-            print("\033[92mResponse from AI Model:\033[0m")
-            # Convert response to a dictionary if possible
-            response_dict = response.to_dict() if hasattr(response, 'to_dict') else str(response)
-            print(json.dumps(response_dict, indent=2))
+
+        logger.debug("\033[92mResponse from AI Model:\033[0m")
+        # Convert response to a dictionary if possible
+        response_dict = response.to_dict() if hasattr(response, 'to_dict') else str(response)
+        logger.debug(json.dumps(response_dict, indent=2))
         return response
 
     def get_chatbot_response(
         self,
         user_input: str,
         seed: int = 42,
-    ) -> Any:
+    ) -> str:
         self.messages.append({"role": "user", "content": user_input})
         retval = self._llm_loop(seed)
-        print("\n\n>>>", retval),  # is_user=False)
+
         self.messages.append(
             {
                 "role": "assistant",
                 "content": retval,
             }
         )
+        return retval
+
     def execute_tool(self, tool_call):
-        print(f"Executing tool call: {tool_call['function']['name']}")
-        print("This is a local tool call.")
+        logger.debug(f"Executing tool call: {tool_call['function']['name']}")
         tool_name = tool_call["function"]["name"]
         arguments = json.loads(tool_call["function"]["arguments"])
-        print(".", end="")
         sys.stdout.flush()
         tool_func = self.tool_map.get(tool_name)
         try:
@@ -208,12 +249,12 @@ class Chatbot:
                 content_for_llm = json.dumps(tool_result)
             else:
                 content_for_llm = str(tool_result)
-            if self.debug_mode:
-                print("\033[93mTool call result:\033[0m")
-                print(content_for_llm)
+
+            logger.debug("\033[93mTool call result:\033[0m")
+            logger.debug(content_for_llm)
 
         except Exception as exc:
-            print(exc)
+            logger.debug(exc)
             content_for_llm = f"Error in calling tool `{tool_name}`: {exc}"  # Include exception for LLM clarity
 
         self.messages.append(
@@ -224,11 +265,11 @@ class Chatbot:
             }
         )
 
-    def _llm_loop(self, seed):
+    def _llm_loop(self, seed: int) -> str:
         # Tool-calling loop
         final_response = "I was unable to find the desired information."
         limit_loop = 6
-        print("   Thinking...", end="")
+        logger.debug("   Thinking...")
         sys.stdout.flush()
 
         found_final_result = False
@@ -242,7 +283,7 @@ class Chatbot:
             response = self._llm_complete(messages_for_llm, tools_to_send, seed)
 
             if not response.choices:
-                print("No response choices available from the AI model.")
+                logger.debug("No response choices available from the AI model.")
                 found_final_result = True
                 break
 
@@ -546,7 +587,7 @@ class Chatbot:
 if __name__ == "__main__":
     # Get the database name from the environment variable
     database_name = os.getenv("GRAMPS_DB_NAME")
-    print(f"Attempting to initialize Chatbot with database: {database_name}")
+    logger.debug(f"Attempting to initialize Chatbot with database: {database_name}")
     # Use env variable if set, otherwise default to ./grampsdb below script
     if GRAMPS_DB_LOCATION:
         SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -555,12 +596,12 @@ if __name__ == "__main__":
             GRAMPS_DB_FOLDER = os.path.join(SCRIPT_DIR, GRAMPS_DB_LOCATION)
         else:
             GRAMPS_DB_FOLDER = GRAMPS_DB_LOCATION
-        print(f"Using database folder: {GRAMPS_DB_FOLDER}")
+        logger.debug(f"Using database folder: {GRAMPS_DB_FOLDER}")
         if not os.path.isdir(GRAMPS_DB_FOLDER):
             raise Exception(
                 f"GRAMPS_DB_FOLDER path does not exist: {GRAMPS_DB_FOLDER}\n"
                 f"GRAMPS_DB_LOCATION env: {GRAMPS_DB_LOCATION}"
             )
         CONFIGMAN.set("database.path", GRAMPS_DB_FOLDER)
-    chatbot = Chatbot(database_name)
-    chatbot.chat()
+    chatbotConsole = ChatBotConsole(database_name)
+    chatbotConsole.chat()
