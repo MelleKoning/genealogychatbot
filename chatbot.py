@@ -104,16 +104,14 @@ Your primary goal is to assist the user by providing accurate and relevant genea
 **Crucial Guidelines for Tool Usage and Output:**
 
 1.  **Prioritize User Response:** Always aim to provide a direct answer to the user's query as soon as you have sufficient information.
-2.  **Tool Purpose:** Use tools ONLY when necessary to gather specific information that directly helps answer the user's request.
+2.  **Tool Purpose:** Use tools to gather specific information that directly helps answer the user's request.
 3.  **About data details from tools:**
-    * Use database keys, grampsID keys, or a person's 'handle' only for internal reference to person data.
+    * Use database keys, grampsID keys, or a person's 'handle' for internal reference to person data but present data based on retrieved names of persons.
     * Do present names of people to communicate human readable data received from tools
 4.  **Progress Monitoring & Self-Correction:**
     * **Assess Tool Results:** After each tool call, carefully evaluate its output. Did it provide the expected information?
       Is it sufficient to progress towards the user's goal?
-    * **Avoid Redundancy:** Do not call the same tool twice in a row.
-    * **Avoid looping:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the
-       user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data and stop.
+    * **Tool use** Use as many tool calls in one go as you want, but do not call the same tool with the same arguments more than once.
 5.  **Graceful Exit with Partial Results:**
     * **Summarize Findings:** Synthesize all the information you have gathered so far. Clearly state what you found and what information you were unable to obtain.
 
@@ -232,12 +230,6 @@ class ChatBot(IChatLogic):
         self.messages.append({"role": "user", "content": user_input})
         retval = self._llm_loop(seed)
 
-        #self.messages.append(
-        #    {
-        #        "role": "assistant",
-        #        "content": retval,
-        #    }
-        #)
         return retval
 
     def execute_tool(self, tool_call):
