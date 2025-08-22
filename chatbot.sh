@@ -14,8 +14,8 @@ if [ -f ./config.env ]; then
     set +a # Stop automatically exporting
 fi
 
-export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash" # cloud model -very good
-#export GRAMPS_AI_MODEL_NAME="gemini/gemini-1.5-flash" # cloud model - good
+#export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash" # cloud model -very good
+export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.0-flash" # cloud model - good
 #export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:latest" # too big for my pc
 #export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:e2b" # no tool cals performed
 #export GRAMPS_AI_MODEL_NAME="ollama/deepseek-r1:8b" # too big for my pc

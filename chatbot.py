@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Pattern
 
 import os
 import json
@@ -34,18 +34,29 @@ debug_mode = ask_debug_mode()
 
 logger = logging.getLogger(__name__)
 
-# Now, we set the level for *our* specific logger based on user input.
-# This does not affect the root logger or other libraries.
+# Create a handler to write log messages to the console
+console_handler = logging.StreamHandler()
+
+# Set the level for the console handler. This is a common point of confusion;
+# you need to set the level on *both* the logger and the handler.
 if debug_mode:
     logger.setLevel(logging.DEBUG)
-logger.debug("logger has been successfully configured for the chatbot module. Debug mode is active.")
+    console_handler.setLevel(logging.DEBUG)
+else:
+    logger.setLevel(logging.INFO)
+    console_handler.setLevel(logging.INFO)
 
+# Add the handler to the logger
+logger.addHandler(console_handler)
+
+logger.info("Application is starting.")
+logger.debug("Debug mode is enabled.")
 
 # interface that we use in the gramplet
 from chatwithllm import IChatLogic
 
 HELP_TEXT = """
-GrampsChat uses the following OS environment variables:
+ChatWIthTree uses the following OS environment variables:
 
 ```
 export GRAMPS_AI_MODEL_NAME="<ENTER MODEL NAME HERE>"
@@ -63,7 +74,7 @@ You can find a list of litellm providers here:
 https://docs.litellm.ai/docs/providers
 
 You can find a list of ollama models here:
-https://ollama.com/library/deepseek-r1:1.5b
+https://ollama.com/library/
 
 ### Optional
 
@@ -81,6 +92,7 @@ For Gemini:
 
 ```
 export GEMINI_API_KEY="gemini-key..."
+export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash"
 ```
 
 """
@@ -94,7 +106,7 @@ Your primary goal is to assist the user by providing accurate and relevant genea
 1.  **Prioritize User Response:** Always aim to provide a direct answer to the user's query as soon as you have sufficient information.
 2.  **Tool Purpose:** Use tools ONLY when necessary to gather specific information that directly helps answer the user's request.
 3.  **About data details from tools:**
-    * Never mention database keys, grampsID keys, or a person's 'handle' directly to the user.
+    * Use database keys, grampsID keys, or a person's 'handle' only for internal reference to person data.
     * Do present names of people to communicate human readable data received from tools
 4.  **Progress Monitoring & Self-Correction:**
     * **Assess Tool Results:** After each tool call, carefully evaluate its output. Did it provide the expected information?
@@ -103,8 +115,7 @@ Your primary goal is to assist the user by providing accurate and relevant genea
     * **Avoid looping:** If you have made 2-3 consecutive tool calls that do not significantly advance towards the
        user's question, or if you encounter persistent errors, assume you are stuck or lacking the necessary data and stop.
 5.  **Graceful Exit with Partial Results:**
-    * **If Stuck or Unable to Progress:** If you can not make progress, or have made several unproductive tool calls, **stop attempting further tool calls immediately.**
-    * **Summarize Findings:** Instead, synthesize all the information you *have* gathered so far, even if it's incomplete or not directly leading to a full answer. Clearly state what you found and what information you were unable to obtain.
+    * **Summarize Findings:** Synthesize all the information you have gathered so far. Clearly state what you found and what information you were unable to obtain.
 
 You can get the start point of the genealogy tree using the `start_point` tool.
 """
@@ -127,7 +138,7 @@ class ChatBotConsole():
         logger.debug("Initializing ChatBotConsole")
 
         # Instantiate the chat logic class. This decouples the logic from the UI.
-        self.chat_logic = Chatbot(database_name)
+        self.chat_logic = ChatBot(database_name)
 
 
     def chat(self):
@@ -137,7 +148,7 @@ class ChatBotConsole():
             print("\n\n>>>", response)
             query = input("\n\nEnter your question: ")
 
-class Chatbot(IChatLogic):
+class ChatBot(IChatLogic):
     def __init__(self, database_name):
 
         self.db = open_database(database_name, force_unlock=True)
@@ -168,6 +179,7 @@ class Chatbot(IChatLogic):
         self.tool_definitions = [
             function_to_litellm_definition(func) for func in self.tool_map.values()
         ]
+        logger.debug(json.dumps(self.tool_definitions, indent=2))
 
 
     # The implementation of the IChatLogic interface
@@ -176,7 +188,18 @@ class Chatbot(IChatLogic):
         Processes the message and returns a reply.
         In this initial version, it simply reverses the input text.
         """
-        return self.get_chatbot_response(message)
+        if message == "exit":
+            quit()
+        if message == "help":
+            return (f"{HELP_TEXT}"
+                f"\nGRAMPS_AI_MODEL_NAME: {GRAMPS_AI_MODEL_NAME}"
+                f"\nGRAMPS_AI_MODEL_URL: {GRAMPS_AI_MODEL_URL}")
+        if message == "history":
+            return json.dumps(self.messages, indent=4, sort_keys=True)
+        if GRAMPS_AI_MODEL_NAME:
+            return self.get_chatbot_response(message)
+        else:
+            return("Error: ensure to set GRAMPS_AI_MODEL_NAME and GRAMPS_AI_MODEL_URL environment variables.")
 
 
 
@@ -187,15 +210,6 @@ class Chatbot(IChatLogic):
         tool_definitions: Optional[List[Dict[str, str]]],
         seed: int,
     ) -> Any:
-        # disabled debug_mode for requests
-        # as the tools in the requests is too lengthy for logger
-         #   print("\033[94mRequest to AI Model:\033[0m")
-          #  print(json.dumps({
-           #     "model": GRAMPS_AI_MODEL_NAME,
-            #    "messages": all_messages,
-             #   "seed": seed,
-              #  "tools": tool_definitions
-            #}, indent=2))
         response = litellm.completion(
             model=GRAMPS_AI_MODEL_NAME,  # self.model,
             messages=all_messages,
@@ -485,20 +499,55 @@ class Chatbot(IChatLogic):
 
         return family_data_list
 
+    def create_search_pattern(self, search_string: str) -> Pattern:
+        """
+        Creates a case-insensitive regex pattern to match any of the words
+        in a given search string, using word boundaries.
+
+        Args:
+            search_string: The string containing words to search for.
+
+        Returns:
+            A compiled regex Pattern object.
+        """
+        # 1. Split the search string into individual words.
+        search_terms = search_string.split()
+
+        # Handle the case of an empty search string
+        if not search_terms:
+            # Return a pattern that will not match anything
+            return re.compile(r'$^')
+
+        # 2. Escape each term to treat special regex characters as literals.
+        escaped_terms = [re.escape(term) for term in search_terms]
+
+        # 3. Join the escaped terms with the regex "OR" operator.
+        regex_or_pattern = "|".join(escaped_terms)
+
+        # 4. Add word boundaries to the pattern and compile it.
+        final_pattern = re.compile(r'\b(?:' + regex_or_pattern + r')\b', re.IGNORECASE)
+
+        return final_pattern
+
     def find_people_by_name(self, search_string: str) -> List[Dict[str, Any]]:
         """
         Searches the Gramps database for people whose primary or alternate names
-        contain the given search string (case-insensitive), using the all_people iterator.
+        contain the given search string.
 
-        Args:
-            search_string: The string to match in person names.
+        Argument:
+            One string to match in person names.
 
         Returns:
             A list of dictionaries, where each dictionary contains the raw data
             of a matching person.
+
+         Example:
+            To find people named "Chris Woods", call the tool with:
+            find_people_by_name(search_string="Chris Woods")
         """
         matching_people_raw_data = []
-        search_pattern = re.compile(re.escape(search_string), re.IGNORECASE)
+        #search_pattern = re.compile(re.escape(search_string), re.IGNORECASE)
+        search_pattern = self.create_search_pattern(search_string)
 
         for person_obj in self.sa.all_people():
             matched = False

@@ -14,6 +14,10 @@ def function_to_litellm_definition(
     required: List[str] = []
 
     for name, param in sig.parameters.items():
+         # We need to skip the 'self' parameter for methods
+        #if name == "self":
+        #    continue
+
         param_type = (
             param.annotation if param.annotation != inspect.Parameter.empty else str
         )
