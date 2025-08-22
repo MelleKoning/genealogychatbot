@@ -232,12 +232,12 @@ class ChatBot(IChatLogic):
         self.messages.append({"role": "user", "content": user_input})
         retval = self._llm_loop(seed)
 
-        self.messages.append(
-            {
-                "role": "assistant",
-                "content": retval,
-            }
-        )
+        #self.messages.append(
+        #    {
+        #        "role": "assistant",
+        #        "content": retval,
+        #    }
+        #)
         return retval
 
     def execute_tool(self, tool_call):
