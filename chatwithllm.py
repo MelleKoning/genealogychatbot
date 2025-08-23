@@ -1,4 +1,6 @@
 import abc
+from typing import Iterator, Tuple
+import time
 
 # ==============================================================================
 # Support GRAMPS API translations
@@ -6,6 +8,12 @@ import abc
 from gramps.gen.plug import Gramplet
 from gramps.gen.const import GRAMPS_LOCALE as glocale
 _ = glocale.get_addon_translator(__file__).gettext
+
+from enum import Enum, auto
+class YieldType(Enum):
+    PARTIAL = auto()
+    TOOL_CALL = auto()
+    FINAL = auto()
 
 # ==============================================================================
 # Interface and Logic Classes
@@ -16,7 +24,7 @@ class IChatLogic(abc.ABC):
     Any class that processes a message and returns a reply must implement this.
     """
     @abc.abstractmethod
-    def get_reply(message: str) -> str:
+    def get_reply(self, message: str) -> Iterator[Tuple[YieldType, str]]:
         """
         Processes a user message and returns a reply string.
         """
@@ -36,9 +44,20 @@ class ChatWithLLM(IChatLogic):
         # For now, it's just a simple text reversal.
         pass
 
-    def get_reply(message: str) -> str:
+    def get_reply(self, message: str) -> Iterator[Tuple[YieldType, str]]:
         """
-        Processes the message and returns a reply.
-        In this initial version, it simply reverses the input text.
+        Processes the message and yields parts of the reply.
+
+        This example simulates a slow, iterative process by yielding
+        one character at a time. In a real-world scenario, you would
+        yield text as it's streamed from the LLM or as tool calls complete.
         """
-        return _("Tree: '{}'").format(message[::-1])
+        if message == "exit":
+            quit()
+
+        reversed_message = _("Tree: '{}'").format(message[::-1])
+
+        for char in reversed_message:
+            yield (YieldType.PARTIAL, char)
+            time.sleep(0.05)  # Simulate a slight delay, like a real-time stream
+        yield (YieldType.FINAL, reversed_message) # final response

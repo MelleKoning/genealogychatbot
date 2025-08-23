@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional, Tuple, Pattern
+from typing import Dict, Any, List, Optional, Tuple, Pattern, Iterator
 
 import os
 import json
@@ -53,7 +53,8 @@ logger.info("Application is starting.")
 logger.debug("Debug mode is enabled.")
 
 # interface that we use in the gramplet
-from chatwithllm import IChatLogic
+from chatwithllm import IChatLogic, YieldType, ChatWithLLM
+
 
 HELP_TEXT = """
 ChatWIthTree uses the following OS environment variables:
@@ -137,14 +138,21 @@ class ChatBotConsole():
 
         # Instantiate the chat logic class. This decouples the logic from the UI.
         self.chat_logic = ChatBot(database_name)
-
+        #self.chat_logic = ChatWithLLM()
 
     def chat(self):
         query = input("\n\nEnter your question: ")
         while query:
-            response = self.chat_logic.get_reply(query)
-            print("\n\n>>>", response)
-            query = input("\n\nEnter your question: ")
+            for reply_type, content in self.chat_logic.get_reply(query):
+                if reply_type == YieldType.PARTIAL:
+                    print(content, end="", flush=True)
+                if reply_type == YieldType.TOOL_CALL:
+                    print(" - toolcall: ", content, flush=True)
+                elif reply_type == YieldType.FINAL:
+                    print("\n>>>", content)
+            #response = self.chat_logic.get_reply(query)
+            #print("\n\n>>>", response)
+            query = input("\nEnter your question: ")
 
 class ChatBot(IChatLogic):
     def __init__(self, database_name):
@@ -181,7 +189,7 @@ class ChatBot(IChatLogic):
 
 
     # The implementation of the IChatLogic interface
-    def get_reply(self, message: str) -> str:
+    def get_reply(self, message: str) -> Iterator[Tuple[YieldType, str]]:
         """
         Processes the message and returns a reply.
         In this initial version, it simply reverses the input text.
@@ -189,15 +197,18 @@ class ChatBot(IChatLogic):
         if message == "exit":
             quit()
         if message == "help":
-            return (f"{HELP_TEXT}"
+            yield (YieldType.FINAL, f"{HELP_TEXT}"
                 f"\nGRAMPS_AI_MODEL_NAME: {GRAMPS_AI_MODEL_NAME}"
                 f"\nGRAMPS_AI_MODEL_URL: {GRAMPS_AI_MODEL_URL}")
+            return
         if message == "history":
-            return json.dumps(self.messages, indent=4, sort_keys=True)
+            yield (YieldType.FINAL, json.dumps(self.messages, indent=4, sort_keys=True))
+            return
         if GRAMPS_AI_MODEL_NAME:
-            return self.get_chatbot_response(message)
+            # yield from returns all yields from the calling func
+            yield from self.get_chatbot_response(message)
         else:
-            return("Error: ensure to set GRAMPS_AI_MODEL_NAME and GRAMPS_AI_MODEL_URL environment variables.")
+            yield (YieldType.FINAL, "Error: ensure to set GRAMPS_AI_MODEL_NAME and GRAMPS_AI_MODEL_URL environment variables.")
 
 
 
@@ -226,11 +237,71 @@ class ChatBot(IChatLogic):
         self,
         user_input: str,
         seed: int = 42,
-    ) -> str:
+    ) -> Iterator[Tuple[YieldType, str]]:
         self.messages.append({"role": "user", "content": user_input})
-        retval = self._llm_loop(seed)
+        yield from self._llm_loop(seed)
 
-        return retval
+
+
+    def _llm_loop(self, seed: int) -> Iterator[Tuple[YieldType, str]]:
+        # Tool-calling loop
+        final_response = "I was unable to find the desired information."
+        limit_loop = 6
+        logger.debug("   Thinking...")
+        sys.stdout.flush()
+
+        found_final_result = False
+
+        for count in range(limit_loop): # Iterates from 0 to 5
+            time.sleep(1)  # Add a one-second delay to prevent overwhelming the AI remote
+
+            messages_for_llm = list(self.messages)
+            tools_to_send = self.tool_definitions  # Send all tools on each attempt
+
+            response = self._llm_complete(messages_for_llm, tools_to_send, seed)
+
+            if not response.choices:
+                logger.debug("No response choices available from the AI model.")
+                found_final_result = True
+                break
+
+            msg = response.choices[0].message
+            self.messages.append(msg.to_dict())  # Add the actual message to the persistent history
+
+            if msg.tool_calls:
+                yield (YieldType.PARTIAL, msg.content)
+                for tool_call in msg["tool_calls"]:
+                    yield (YieldType.TOOL_CALL, tool_call['function']['name'])
+                    self.execute_tool(tool_call)
+            else:
+                final_response = response.choices[0].message.content
+                found_final_result = True
+                break
+
+        # If the loop completed without being interrupted (no break), force a final response.
+        if not found_final_result:
+            # Append a temporary system message to guide the final response
+            messages_for_llm = list(self.messages)  # Start from the current message history
+            messages_for_llm.append(
+                {
+                    "role": "system",
+                    "content": "You have reached the maximum number of "
+                    "tool-calling attempts. Based on the information gathered "
+                    "so far, provide the most complete answer you can, or "
+                    "clearly state what information you could not obtain. Do "
+                    "not attempt to call any more tools."
+                }
+            )
+            response = self._llm_complete(messages_for_llm, None, seed)  # No tools!
+            if response.choices:
+                final_response = response.choices[0].message.content
+
+        # Ensure final_response is set in case of edge cases
+        if final_response == "I was unable to find the desired information." and self.messages and self.messages[-1].get("content"):
+            final_response = self.messages[-1]["content"]
+
+        yield (YieldType.FINAL, final_response)
+
 
     def execute_tool(self, tool_call):
         logger.debug(f"Executing tool call: {tool_call['function']['name']}")
@@ -270,65 +341,6 @@ class ChatBot(IChatLogic):
                 "content": content_for_llm,
             }
         )
-
-    def _llm_loop(self, seed: int) -> str:
-        # Tool-calling loop
-        final_response = "I was unable to find the desired information."
-        limit_loop = 6
-        logger.debug("   Thinking...")
-        sys.stdout.flush()
-
-        found_final_result = False
-
-        for count in range(limit_loop): # Iterates from 0 to 5
-            time.sleep(1)  # Add a one-second delay to prevent overwhelming the AI remote
-
-            messages_for_llm = list(self.messages)
-            tools_to_send = self.tool_definitions  # Send all tools on each attempt
-
-            response = self._llm_complete(messages_for_llm, tools_to_send, seed)
-
-            if not response.choices:
-                logger.debug("No response choices available from the AI model.")
-                found_final_result = True
-                break
-
-            msg = response.choices[0].message
-            self.messages.append(msg.to_dict())  # Add the actual message to the persistent history
-
-            if msg.tool_calls:
-                for tool_call in msg["tool_calls"]:
-                    self.execute_tool(tool_call)
-            else:
-                final_response = response.choices[0].message.content
-                found_final_result = True
-                break
-
-        # If the loop completed without being interrupted (no break), force a final response.
-        if not found_final_result:
-            # Append a temporary system message to guide the final response
-            messages_for_llm = list(self.messages)  # Start from the current message history
-            messages_for_llm.append(
-                {
-                    "role": "system",
-                    "content": "You have reached the maximum number of "
-                    "tool-calling attempts. Based on the information gathered "
-                    "so far, provide the most complete answer you can, or "
-                    "clearly state what information you could not obtain. Do "
-                    "not attempt to call any more tools."
-                }
-            )
-            response = self._llm_complete(messages_for_llm, None, seed)  # No tools!
-            if response.choices:
-                final_response = response.choices[0].message.content
-
-        # Ensure final_response is set in case of edge cases
-        if final_response == "I was unable to find the desired information." and self.messages and self.messages[-1].get("content"):
-            final_response = self.messages[-1]["content"]
-
-        return final_response
-
-
 
     # Tools:
 
