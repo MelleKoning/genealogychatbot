@@ -15,6 +15,9 @@ if [ -f ./config.env ]; then
 fi
 export GRAMPS_AI_MODEL_NAME="non-existing/model" # non existing
 
+# you can now set models while the chatbot runs in the chat:
+#/setmodel gemini/gemini-flash-latest
+#/setmodel gemini/gemini-flash-lite-latest
 #export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash" # cloud model -very good
 #export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.0-flash" # cloud model - good
 #export GRAMPS_AI_MODEL_NAME="ollama/gemma3n:latest" # too big for my pc
@@ -37,7 +40,7 @@ echo "The used database is: $GRAMPS_DB_NAME"
 VENV_NAME="venv_chat"
 
 # Set the name of your Python script
-PYTHON_SCRIPT="chatbot.py"
+PYTHON_SCRIPT="ChatBotConsole.py"
 
 # Define the Python package(s) your script needs
 # These will be installed in the virtual environment

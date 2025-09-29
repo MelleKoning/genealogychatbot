@@ -1,19 +1,23 @@
 import abc
-from typing import Iterator, Tuple
 import time
+from enum import Enum, auto
+from typing import Iterator, Tuple
+
+from gramps.gen.const import GRAMPS_LOCALE as glocale
 
 # ==============================================================================
 # Support GRAMPS API translations
 # ==============================================================================
-from gramps.gen.plug import Gramplet
-from gramps.gen.const import GRAMPS_LOCALE as glocale
+# from gramps.gen.plug import Gramplet
+
 _ = glocale.get_addon_translator(__file__).gettext
 
-from enum import Enum, auto
+
 class YieldType(Enum):
     PARTIAL = auto()
     TOOL_CALL = auto()
     FINAL = auto()
+
 
 # ==============================================================================
 # Interface and Logic Classes
@@ -23,6 +27,7 @@ class IChatLogic(abc.ABC):
     Abstract base class (interface) for chat logic.
     Any class that processes a message and returns a reply must implement this.
     """
+
     @abc.abstractmethod
     def get_reply(self, message: str) -> Iterator[Tuple[YieldType, str]]:
         """
@@ -30,11 +35,20 @@ class IChatLogic(abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def open_database(self) -> None:
+        """
+        Opens the Gramps database.
+        """
+        pass
+
+
 class ChatWithLLM(IChatLogic):
     """
     This class contains the actual logic for processing the chat messages.
     It implements the IChatLogic interface.
     """
+
     def __init__(self):
         """
         Constructor for the chat logic class.
@@ -42,6 +56,12 @@ class ChatWithLLM(IChatLogic):
         resources needed to generate a reply.
         """
         # For now, it's just a simple text reversal.
+        pass
+
+    def open_database(self) -> None:
+        """
+        Opens the Gramps database.
+        """
         pass
 
     def get_reply(self, message: str) -> Iterator[Tuple[YieldType, str]]:
@@ -60,4 +80,4 @@ class ChatWithLLM(IChatLogic):
         for char in reversed_message:
             yield (YieldType.PARTIAL, char)
             time.sleep(0.05)  # Simulate a slight delay, like a real-time stream
-        yield (YieldType.FINAL, reversed_message) # final response
+        yield (YieldType.FINAL, reversed_message)  # final response

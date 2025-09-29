@@ -1,7 +1,6 @@
-from typing import Callable, Dict, Any, Optional, List
-
 import inspect
 import typing
+from typing import Any, Callable, Dict, List, Optional
 
 
 def function_to_litellm_definition(
@@ -14,15 +13,18 @@ def function_to_litellm_definition(
     required: List[str] = []
 
     for name, param in sig.parameters.items():
-         # We need to skip the 'self' parameter for methods
-        #if name == "self":
+        # We need to skip the 'self' parameter for methods
+        # if name == "self":
         #    continue
 
         param_type = (
             param.annotation if param.annotation != inspect.Parameter.empty else str
         )
         json_type = python_type_to_json_type(param_type)
-        properties[name] = {"type": json_type, "description": f"{name} parameter"}
+        properties[name] = {
+            "type": json_type,
+            "description": f"{name} parameter",
+        }
         if param.default == inspect.Parameter.empty:
             required.append(name)
 
@@ -47,6 +49,7 @@ def function_to_litellm_definition(
         "type": "function",
         "function": function_def,
     }
+
 
 def python_type_to_json_type(python_type: type) -> str:
     # Basic type mapping
