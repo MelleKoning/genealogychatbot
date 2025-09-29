@@ -1,16 +1,37 @@
-from typing import Dict, Any, List, Optional, Tuple, Pattern, Iterator
+#
+# Gramps - a GTK+/GNOME based genealogy program
+#
+# Copyright (C) 2025 Melle Koning
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#
+import logging
+LOG = logging.getLogger(".")
 
-import os
-import json
-import sys
-import time
-import re
-import inspect
 try:
+    from typing import Dict, Any, List, Optional, Tuple, Pattern, Iterator
+    import os
+    import json
+    import sys
+    import time
+    import re
+    import inspect
     import litellm
-except ImportError:
-    raise Exception("GrampsChat requires litellm")
-# import markdown
+except ImportError as e:
+    LOG.warning(e)
+    raise Exception("ChatWithTree requires litellm")
 
 litellm.drop_params = True
 
@@ -24,51 +45,10 @@ from gramps.gen.config import CONFIGMAN
 # gramps translation support for this module
 _ = glocale.translation.gettext
 
-# logging for this module
-import logging
-def ask_debug_mode() -> bool:
-    response = input("Do you want to enable debug mode? (y/n): ").strip().lower()
-    return response == 'y'
-
-debug_mode = ask_debug_mode()
-
-logger = logging.getLogger(__name__)
-
-# Create a handler to write log messages to the console
-console_handler = logging.StreamHandler()
-
-# Set the level for the console handler. This is a common point of confusion;
-# you need to set the level on *both* the logger and the handler.
-if debug_mode:
-    logger.setLevel(logging.DEBUG)
-    console_handler.setLevel(logging.DEBUG)
-else:
-    logger.setLevel(logging.INFO)
-    console_handler.setLevel(logging.INFO)
-
-# Add the handler to the logger
-logger.addHandler(console_handler)
-
-logger.info("Application is starting.")
-logger.debug("Debug mode is enabled.")
-
 # interface that we use in the gramplet
-from chatwithllm import IChatLogic, YieldType, ChatWithLLM
-
+from chatwithllm import IChatLogic, YieldType
 
 HELP_TEXT = """
-Commands:
-/help - show this help text
-/history - show the full chat history in JSON format
-/setmodel <model_name> - set the model name to use for the LLM
-
-The <model_name> depends on the LLM provider you are using.
-Usually the model name can be found on the provider's website.
-
-Examples:
-/setmodel ollama/deepseek-r1:1.5b
-/setmodel openrouter/moonshotai/kimi-k2:free
-
 ChatWithTree uses the following OS environment variables:
 
 ```
@@ -101,13 +81,28 @@ For OpenAI:
 export OPENAI_API_KEY="sk-..."
 ```
 
+For Moonshot:
+export MOONSHOT_API_KEY="sk-..."
+For Deepseek:
+export DEEPSEEK_API_KEY="sk-..."
 For Gemini:
-
-```
 export GEMINI_API_KEY="gemini-key..."
 export GRAMPS_AI_MODEL_NAME="gemini/gemini-2.5-flash"
-```
 
+for Anthropic:
+export ANTHROPIC_API_KEY="sk-..."
+
+Commands:
+/help - show this help text
+/history - show the full chat history in JSON format
+/setmodel <model_name> - set the model name to use for the LLM
+
+The <model_name> depends on the LLM provider you are using.
+Usually the model name can be found on the provider's website.
+
+Examples:
+/setmodel ollama/deepseek-r1:1.5b
+/setmodel openrouter/moonshotai/kimi-k2:free
 """
 
 SYSTEM_PROMPT = """
@@ -133,50 +128,23 @@ You can get the start point of the genealogy tree using the `start_point` tool.
 
 GRAMPS_AI_MODEL_NAME = os.environ.get("GRAMPS_AI_MODEL_NAME")
 GRAMPS_AI_MODEL_URL = os.environ.get("GRAMPS_AI_MODEL_URL")
-# overwrite the default database path in case the env variable is set
-GRAMPS_DB_LOCATION = os.environ.get("GRAMPS_DB_LOCATION")
 
 from litellm_utils import function_to_litellm_definition
 
-
-class ChatBotConsole():
-    """
-    This class contains the actual logic for processing the chat messages.
-    It implements the IChatLogic interface.
-    """
-
-    def __init__(self, database_name):
-        logger.debug("Initializing ChatBotConsole")
-
-        # Instantiate the chat logic class. This decouples the logic from the UI.
-        self.chat_logic = ChatBot(database_name)
-        #self.chat_logic = ChatWithLLM()
-
-    def chat(self):
-        query = input("\n\nEnter your question: ")
-        while query:
-            for reply_type, content in self.chat_logic.get_reply(query):
-                if reply_type == YieldType.PARTIAL:
-                    print(content, end="", flush=True)
-                if reply_type == YieldType.TOOL_CALL:
-                    print(" - toolcall: ", content, flush=True)
-                elif reply_type == YieldType.FINAL:
-                    print("\n>>>", content)
-            #response = self.chat_logic.get_reply(query)
-            #print("\n\n>>>", response)
-            query = input("\nEnter your question: ")
-
+# ===
+# ChatBot class gets initialized when a Gramps database
+# is selected (on db change)
+# ===
 class ChatBot(IChatLogic):
-    def __init__(self, database_name):
-
-        self.db = open_database(database_name, force_unlock=True)
-        if self.db is None:
-            raise Exception(f"Unable to open database {database_name}")
-        self.messages = []
-        # initialize chat history with system prompt
-        self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
-
+    def __init__(self, gramplet_instance):
+        self.gramplet_instance = gramplet_instance
+        self.dbstate = gramplet_instance.dbstate
+        self.db = self.dbstate.db
         self.sa = SimpleAccess(self.db)
+        
+        self.messages = []
+        self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        LOG.debug("Chatbot init and SimpleAccess created successfully")
         self.tool_map = {
             "start_point": self.start_point,
             "get_person": self.get_person,
@@ -197,7 +165,8 @@ class ChatBot(IChatLogic):
         self.tool_definitions = [
             function_to_litellm_definition(func) for func in self.tool_map.values()
         ]
-         # This dictionary maps command names to their handler methods
+
+        # This dictionary maps command names to their handler methods
         self.command_handlers = {
             "/help": self.command_handle_help,
             "/history": self.command_handle_history,
@@ -234,7 +203,6 @@ class ChatBot(IChatLogic):
         GRAMPS_AI_MODEL_NAME = new_model_name
         yield (YieldType.FINAL, f"Model name set to: {GRAMPS_AI_MODEL_NAME}")
 
-
     # The implementation of the IChatLogic interface
     def get_reply(self, message: str) -> Iterator[Tuple[YieldType, str]]:
         """
@@ -262,31 +230,29 @@ class ChatBot(IChatLogic):
             yield from self.get_chatbot_response(message)
         else:
             yield (YieldType.FINAL, "Error: ensure to set GRAMPS_AI_MODEL_NAME and GRAMPS_AI_MODEL_URL environment variables.")
+      
+    
 
-    # @_throttle.rate_limited(_limiter)
+   # @_throttle.rate_limited(_limiter)
     def _llm_complete(
         self,
         all_messages: List[Dict[str, str]],
         tool_definitions: Optional[List[Dict[str, str]]],
         seed: int,
     ) -> Any:
-        try:
-            response = litellm.completion(
-                model=GRAMPS_AI_MODEL_NAME,  # self.model,
-                messages=all_messages,
-                seed=seed,
-                tools=tool_definitions,
-                tool_choice="auto" if tool_definitions is not None else None,
-            )
+        response = litellm.completion(
+            model=GRAMPS_AI_MODEL_NAME,  # self.model,
+            messages=all_messages,
+            seed=seed,
+            tools=tool_definitions,
+            tool_choice="auto" if tool_definitions is not None else None,
+        )
 
-            logger.debug("\033[92mResponse from AI Model:\033[0m")
-            # Convert response to a dictionary if possible
-            response_dict = response.to_dict() if hasattr(response, 'to_dict') else str(response)
-            logger.debug(json.dumps(response_dict, indent=2))
-            return response
-        except Exception as exc:
-            logger.debug(exc)
-            return f"Error in LLM completion: {exc}"
+        # logger.debug("\033[92mResponse from AI Model:\033[0m")
+        # Convert response to a dictionary if possible
+        response_dict = response.to_dict() if hasattr(response, 'to_dict') else str(response)
+        # logger.debug(json.dumps(response_dict, indent=2))
+        return response
 
     def get_chatbot_response(
         self,
@@ -296,13 +262,50 @@ class ChatBot(IChatLogic):
         self.messages.append({"role": "user", "content": user_input})
         yield from self._llm_loop(seed)
 
+    def execute_tool(self, tool_call):
+        # logger.debug(f"Executing tool call: {tool_call['function']['name']}")
+        tool_name = tool_call["function"]["name"]
+        arguments = json.loads(tool_call["function"]["arguments"])
+        sys.stdout.flush()
+        tool_func = self.tool_map.get(tool_name)
+        try:
+            if tool_func is not None:
+                sig = inspect.signature(tool_func)
+                if len(sig.parameters) == 0:
+                    # Ignore any arguments, call with none
+                    tool_result = tool_func()
+                else:
+                    tool_result = tool_func(**arguments)
 
+            else:
+                tool_result = f"Unknown tool: {tool_name}"
+
+            content_for_llm = ""
+            if isinstance(tool_result, (dict, list)):
+                content_for_llm = json.dumps(tool_result)
+            else:
+                content_for_llm = str(tool_result)
+
+            #logger.debug("\033[93mTool call result:\033[0m")
+            #logger.debug(content_for_llm)
+
+        except Exception as exc:
+            #logger.debug(exc)
+            content_for_llm = f"Error in calling tool `{tool_name}`: {exc}"  # Include exception for LLM clarity
+
+        self.messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": content_for_llm,
+            }
+        )
 
     def _llm_loop(self, seed: int) -> Iterator[Tuple[YieldType, str]]:
         # Tool-calling loop
         final_response = "I was unable to find the desired information."
         limit_loop = 6
-        logger.debug("   Thinking...")
+        # logger.debug("   Thinking...")
         sys.stdout.flush()
 
         found_final_result = False
@@ -315,8 +318,8 @@ class ChatBot(IChatLogic):
 
             response = self._llm_complete(messages_for_llm, tools_to_send, seed)
 
-            if  isinstance(response, str) or (not response.choices):
-                logger.debug("No response choices available from the AI model.")
+            if not response.choices:
+                # logger.debug("No response choices available from the AI model.")
                 found_final_result = True
                 break
 
@@ -361,54 +364,14 @@ class ChatBot(IChatLogic):
 
         yield (YieldType.FINAL, final_response)
 
-
-    def execute_tool(self, tool_call):
-        logger.debug(f"Executing tool call: {tool_call['function']['name']}")
-        tool_name = tool_call["function"]["name"]
-        arguments = json.loads(tool_call["function"]["arguments"])
-        sys.stdout.flush()
-        tool_func = self.tool_map.get(tool_name)
-        try:
-            if tool_func is not None:
-                sig = inspect.signature(tool_func)
-                if len(sig.parameters) == 0:
-                    # Ignore any arguments, call with none
-                    tool_result = tool_func()
-                else:
-                    tool_result = tool_func(**arguments)
-
-            else:
-                tool_result = f"Unknown tool: {tool_name}"
-
-            content_for_llm = ""
-            if isinstance(tool_result, (dict, list)):
-                content_for_llm = json.dumps(tool_result)
-            else:
-                content_for_llm = str(tool_result)
-
-            logger.debug("\033[93mTool call result:\033[0m")
-            logger.debug(content_for_llm)
-
-        except Exception as exc:
-            logger.debug(exc)
-            content_for_llm = f"Error in calling tool `{tool_name}`: {exc}"  # Include exception for LLM clarity
-
-        self.messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "content": content_for_llm,
-            }
-        )
-
     # Tools:
-
     def get_person(self, person_handle: str) -> Dict[str, Any]:
         """
         Given a person's handle, get the data dictionary of that person.
         """
         data = dict(self.db.get_raw_person_data(person_handle))
         return data
+        
 
     def get_mother_of_person(self, person_handle: str) -> Dict[str, Any]:
         """
@@ -566,16 +529,16 @@ class ChatBot(IChatLogic):
         """
         Creates a case-insensitive regex pattern to match any of the words
         in a given search string, using word boundaries.
-
+        
         Args:
             search_string: The string containing words to search for.
-
+        
         Returns:
             A compiled regex Pattern object.
         """
         # 1. Split the search string into individual words.
         search_terms = search_string.split()
-
+        
         # Handle the case of an empty search string
         if not search_terms:
             # Return a pattern that will not match anything
@@ -586,10 +549,10 @@ class ChatBot(IChatLogic):
 
         # 3. Join the escaped terms with the regex "OR" operator.
         regex_or_pattern = "|".join(escaped_terms)
-
+        
         # 4. Add word boundaries to the pattern and compile it.
         final_pattern = re.compile(r'\b(?:' + regex_or_pattern + r')\b', re.IGNORECASE)
-
+        
         return final_pattern
 
     def find_people_by_name(self, search_string: str) -> List[Dict[str, Any]]:
@@ -603,7 +566,7 @@ class ChatBot(IChatLogic):
         Returns:
             A list of dictionaries, where each dictionary contains the raw data
             of a matching person.
-
+        
          Example:
             To find people named "Chris Woods", call the tool with:
             find_people_by_name(search_string="Chris Woods")
@@ -696,24 +659,6 @@ class ChatBot(IChatLogic):
         return matching_people_raw_data
 
 
-if __name__ == "__main__":
-    # Get the database name from the environment variable
-    database_name = os.getenv("GRAMPS_DB_NAME")
-    logger.debug(f"Attempting to initialize Chatbot with database: {database_name}")
-    # Use env variable if set, otherwise default to ./grampsdb below script
-    if GRAMPS_DB_LOCATION:
-        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-        # If the env var is a relative path, resolve it relative to script
-        if not os.path.isabs(GRAMPS_DB_LOCATION):
-            GRAMPS_DB_FOLDER = os.path.join(SCRIPT_DIR, GRAMPS_DB_LOCATION)
-        else:
-            GRAMPS_DB_FOLDER = GRAMPS_DB_LOCATION
-        logger.debug(f"Using database folder: {GRAMPS_DB_FOLDER}")
-        if not os.path.isdir(GRAMPS_DB_FOLDER):
-            raise Exception(
-                f"GRAMPS_DB_FOLDER path does not exist: {GRAMPS_DB_FOLDER}\n"
-                f"GRAMPS_DB_LOCATION env: {GRAMPS_DB_LOCATION}"
-            )
-        CONFIGMAN.set("database.path", GRAMPS_DB_FOLDER)
-    chatbotConsole = ChatBotConsole(database_name)
-    chatbotConsole.chat()
+
+
+    
