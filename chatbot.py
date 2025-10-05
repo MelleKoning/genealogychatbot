@@ -186,7 +186,7 @@ class ChatBot(IChatLogic):
             "/setlimit": self.command_handle_setlimit,
         }
 
-    def open_database(self) -> None:
+    def open_database_for_chat(self) -> None:
         self.db = open_database(self.database_name, force_unlock=True)
         if self.db is None:
             raise Exception(f"Unable to open database {self.database_name}")

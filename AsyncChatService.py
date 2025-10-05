@@ -35,7 +35,7 @@ class AsyncChatService:
 
         def init_task() -> None:
             logger.debug("Running open_database on the dedicated worker thread.")
-            self.chat_logic.open_database()
+            self.chat_logic.open_database_for_chat()
 
         # Blocking wait for the database to open on the worker thread.
         future = self.executor.submit(init_task)

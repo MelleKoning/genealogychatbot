@@ -36,7 +36,7 @@ class IChatLogic(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def open_database(self) -> None:
+    def open_database_for_chat(self) -> None:
         """
         Opens the Gramps database.
         """
@@ -58,7 +58,7 @@ class ChatWithLLM(IChatLogic):
         # For now, it's just a simple text reversal.
         pass
 
-    def open_database(self) -> None:
+    def open_database_for_chat(self) -> None:
         """
         Opens the Gramps database.
         """
